@@ -34,6 +34,20 @@ def probe_dur(path):
         return 0.0
 
 
+def _ken_burns_fallback(src_img, dest_mp4, duration=5):
+    """Generate a simple Ken Burns zoom clip from a still image (fallback when
+    a real clip is missing)."""
+    fps = 24
+    total_frames = int(duration * fps)
+    fc = (f"[0:v]scale=1920:1080:force_original_aspect_ratio=increase,"
+          f"crop=1920:1080,"
+          f"zoompan=z='min(zoom+0.0015,1.15)':d={total_frames}:s=1920x1080:fps={fps},"
+          f"setsar=1[v]")
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-i", src_img,
+                    "-filter_complex", fc, "-map", "[v]", "-t", str(duration),
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", dest_mp4], check=True)
+
+
 def shots_of(beat):
     if beat.get("shots"):
         for s in beat["shots"]:
@@ -49,8 +63,8 @@ def run(project_dir):
     W, H = RES.get(doc.get("aspect", "16:9"), (1920, 1080))
     wm_text = doc.get("watermark", WATERMARK)
     mix = doc.get("mix", {})                      # per-project audio balance (optional)
-    music_vol = float(mix.get("music", 0.6))      # BGM level (was a fixed 0.9 — lowered so VO leads)
-    voice_vol = float(mix.get("voice", 1.25))     # narration boost before the duck + final mix
+    music_vol = float(mix.get("music", 0.35))     # BGM level — low so VO always leads
+    voice_vol = float(mix.get("voice", 2.0))      # narration boost — loud and clear
     cap_style = doc.get("caption_style", "white") # white (default, clean) | paper (collage)
     tmp = os.path.join(project_dir, "_seg")
     os.makedirs(tmp, exist_ok=True)
@@ -59,6 +73,7 @@ def run(project_dir):
     segs = []          # {clip, dur}
     beat_spans = []    # {start, dur, beat}
     t = 0.0
+    seg_idx = 0
     for beat in beats:
         beat_start = t
         shot_list = list(shots_of(beat))
@@ -68,8 +83,20 @@ def run(project_dir):
         if sum(durs) < need:
             durs[-1] += need - sum(durs)
         for s, d in zip(shot_list, durs):
-            segs.append({"clip": s["clip_path"], "dur": round(d, 2)})
+            clip = s["clip_path"]
+            # Verify clip exists — if not, generate a Ken Burns fallback from keyframe
+            if not os.path.exists(clip):
+                kf = s.get("keyframe_path", "")
+                if kf and os.path.exists(kf):
+                    fallback = os.path.join(tmp, f"fallback_{seg_idx:02d}.mp4")
+                    _ken_burns_fallback(kf, fallback, d)
+                    clip = fallback
+                    print(f"  [warn] clip missing for shot {s.get('id','?')}, using Ken Burns fallback")
+                else:
+                    raise FileNotFoundError(f"Clip not found: {clip} and no keyframe for fallback")
+            segs.append({"clip": clip, "dur": round(d, 2)})
             t += d
+            seg_idx += 1
         beat_spans.append({"start": beat_start, "dur": round(t - beat_start, 2), "beat": beat})
     total = round(t, 2)
 
@@ -152,12 +179,13 @@ def run(project_dir):
     chain.append("[narrmix]asplit=2[narrA][narrB]")
     chain.append(f"[{bgm_idx}:a]atrim=0:{total},volume={music_vol},afade=t=out:st={max(total-2,0):.2f}:d=2[bgt]")
     chain.append("[bgt][narrA]sidechaincompress=threshold=0.02:ratio=12:attack=5:release=350[bgd]")
-    chain.append(f"[narrB][bgd]amix=inputs=2:normalize=0:duration=longest,volume=1.4,atrim=0:{total}[a]")
+    chain.append(f"[narrB][bgd]amix=inputs=2:normalize=0:duration=longest,volume=1.8,atrim=0:{total}[a]")
     filt = ";".join(chain)
 
     final = os.path.join(project_dir, "final.mp4")
     ff([*inputs, "-filter_complex", filt, "-map", "[v]", "-map", "[a]",
-        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", final])
+        "-c:v", "libx264", "-crf", "23", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k", "-shortest", final])
     print("FINAL:", final, f"(~{total}s, {len(segs)} shots)")
 
 

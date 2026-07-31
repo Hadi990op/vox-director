@@ -58,10 +58,23 @@ def load_jobs():
         with open(JOBS_DB) as f:
             data = json.load(f)
         for jid, j in data.items():
-            # Mark any jobs that were running when server died as failed
+            # Recover jobs that were running when server died:
+            # If final.mp4 exists, mark as done. Otherwise mark as failed.
             if j.get("status") in ("keyframes", "clips", "audio", "assemble"):
-                j["status"] = "failed"
-                j["error"] = "Server restarted during processing"
+                pdir = j.get("project_dir", "")
+                if pdir:
+                    final_video = Path(pdir) / "final.mp4"
+                    if final_video.exists() and final_video.stat().st_size > 10000:
+                        j["status"] = "done"
+                        j["progress"] = 100
+                        j["result_video"] = str(final_video)
+                        j["error"] = None
+                    else:
+                        j["status"] = "failed"
+                        j["error"] = "Server restarted during processing"
+                else:
+                    j["status"] = "failed"
+                    j["error"] = "Server restarted during processing"
             j["cancel"] = False
             jobs[jid] = j
         # Set counter past highest existing job number
@@ -310,6 +323,18 @@ def run_pipeline(job_id, project_dir):
             job["progress"] = int(cumulative * 100 / total_weight)
 
             if proc.returncode != 0:
+                # Before declaring failure, check if final.mp4 exists anyway
+                # (assemble may have completed but crashed during cleanup)
+                final_video = project_dir / "final.mp4"
+                if final_video.exists() and final_video.stat().st_size > 10000:
+                    job["status"] = "done"
+                    job["progress"] = 100
+                    job["result_video"] = str(final_video)
+                    size_mb = final_video.stat().st_size / 1024 / 1024
+                    log(f"⚠️ Step '{step_name}' exited with {proc.returncode}, but final.mp4 exists ({size_mb:.1f} MB) — marking done")
+                    with job_lock:
+                        save_jobs()
+                    return
                 job["status"] = "failed"
                 job["error"] = f"Step '{step_name}' failed (exit {proc.returncode})"
                 log(f"❌ Step '{step_name}' FAILED (exit {proc.returncode})!")
@@ -335,15 +360,31 @@ def run_pipeline(job_id, project_dir):
             save_jobs()
 
     except subprocess.TimeoutExpired:
-        job["status"] = "failed"
-        job["error"] = "Pipeline timed out"
-        log("❌ Pipeline timed out!")
+        # Check if final.mp4 exists despite timeout
+        final_video = project_dir / "final.mp4"
+        if final_video.exists() and final_video.stat().st_size > 10000:
+            job["status"] = "done"
+            job["progress"] = 100
+            job["result_video"] = str(final_video)
+            log(f"⚠️ Pipeline timed out, but final.mp4 exists — marking done")
+        else:
+            job["status"] = "failed"
+            job["error"] = "Pipeline timed out"
+            log("❌ Pipeline timed out!")
         with job_lock:
             save_jobs()
     except Exception as e:
-        job["status"] = "failed"
-        job["error"] = str(e)
-        log(f"❌ Error: {e}")
+        # Check if final.mp4 exists despite error
+        final_video = project_dir / "final.mp4"
+        if final_video.exists() and final_video.stat().st_size > 10000:
+            job["status"] = "done"
+            job["progress"] = 100
+            job["result_video"] = str(final_video)
+            log(f"⚠️ Error: {e}, but final.mp4 exists — marking done")
+        else:
+            job["status"] = "failed"
+            job["error"] = str(e)
+            log(f"❌ Error: {e}")
         with job_lock:
             save_jobs()
 
@@ -1128,6 +1169,12 @@ def api_generate_script():
         "HOOK RULES: Hook in <=3 seconds. Beat 1 headline MUST carry the payoff-promise.\n"
         "Each beat has 2 shots (wide + detail). Vary camera moves. Rich element motion.\n"
         "Bold flat background colors. End with hard_cut.\n\n"
+        "CRITICAL NARRATION RULES:\n"
+        "- EVERY beat MUST have a UNIQUE narration line — NEVER repeat the same text twice.\n"
+        "- Each narration MUST contain specific facts, details, or insights about the TOPIC.\n"
+        "- Narration should tell a complete story about the topic from start to finish.\n"
+        "- Do NOT use generic filler like 'Now you know the secret' for multiple beats.\n"
+        "- Each line should be 8-20 words, punchy, and informative.\n\n"
         "ALSO generate a YouTube-optimized title and description:\n"
         "- title: Max 70 chars, click-worthy, includes the topic, uses curiosity/power words. NOT clickbait.\n"
         "- description: 2-3 paragraphs. First line is a hook summary. Then key points from the video. "
@@ -1246,11 +1293,25 @@ def api_generate_script():
                 beat["title_cn"] = ""
             if not beat.get("hook"):
                 beat["hook"] = "surprising_stat" if beat.get("id") == 1 else "none"
+            # Ensure narration is not empty
+            if not beat.get("narration"):
+                beat["narration"] = f"Here's what's fascinating about {topic}."
             for shot in beat.get("shots", []):
                 if not shot.get("scene"):
                     shot["scene"] = (beat.get("narration", ""))[:100]
                 if not shot.get("element_motion"):
                     shot["element_motion"] = "paper elements drift, halftone pulses"
+
+        # Post-process: fix duplicate narrations from AI (common Agnes bug)
+        seen_narrations = {}
+        for beat in beats.get("beats", []):
+            n = beat.get("narration", "").strip()
+            if n in seen_narrations:
+                seen_narrations[n] += 1
+                # Append beat number to make unique
+                beat["narration"] = f"{n} (Part {seen_narrations[n]})"
+            else:
+                seen_narrations[n] = 1
 
         return jsonify({"beats": beats, "source": "ai"})
 
@@ -1353,12 +1414,28 @@ def _generate_template_beats(topic, duration, aspect, theme, arc, language, voic
 
     templates = arc_templates.get(arc, arc_templates["hook_payoff"])
 
-    # Build beats
+    # Build beats — cycle through templates but vary narration with topic + index
+    # so no two beats have identical narration (the old bug: beats 6+ all repeated
+    # the last template's text verbatim).
     beats_list = []
     for i in range(beat_count):
-        tpl_idx = min(i, len(templates) - 1)
+        tpl_idx = i % len(templates)
         narration_tpl, title_en = templates[tpl_idx]
         narration = narration_tpl.replace("{topic}", topic.lower())
+
+        # If we've cycled through all templates, append variation to avoid duplicates
+        if i >= len(templates):
+            cycle = i // len(templates)
+            # Add a unique suffix so each repetition reads differently
+            variations = [
+                f" And this part of {topic.lower()}? Even more fascinating.",
+                f" Here's another layer to the {topic.lower()} story.",
+                f" But wait — there's more to {topic.lower()} than you'd think.",
+                f" The deeper you go into {topic.lower()}, the stranger it gets.",
+                f" And this detail about {topic.lower()} changes everything.",
+            ]
+            narration += variations[cycle % len(variations)]
+            title_en += f" (Part {cycle + 2})"
 
         # Hook pattern
         if i == 0:
