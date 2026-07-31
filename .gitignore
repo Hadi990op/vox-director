@@ -16,6 +16,14 @@ venv/
 credentials.json
 token.json
 *.key
+.api_key
+.agnes_key
+.agnes_keys
+.agentrouter_key
+.libertai_key
+
+# runtime state
+jobs.json
 
 # internal working notes (kept local, not published)
 PROGRESS.md

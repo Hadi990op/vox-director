@@ -15,6 +15,13 @@ from abc import ABC, abstractmethod
 
 import atlas_cloud
 
+# Free provider (Pollinations images + ffmpeg motion + edge-tts) — zero cost
+try:
+    import free_provider as _fp
+    _HAS_FREE = True
+except Exception:
+    _HAS_FREE = False
+
 
 class ProviderError(RuntimeError):
     pass
@@ -80,6 +87,8 @@ class AtlasCloudProvider(Provider):
 
 
 _REGISTRY = {"atlas_cloud": AtlasCloudProvider}
+if _HAS_FREE:
+    _REGISTRY["free"] = _fp.FreeProvider
 
 
 def get_provider(name=None):
@@ -97,6 +106,10 @@ def run_jobs(prov, specs, *, poll_s=3, stall_s=90, max_retries=2, deadline_s=900
     or stays pending past `stall_s`, is resubmitted (fresh id) up to `max_retries`
     times — this is what stops one stuck prediction from wasting the whole deadline.
     Returns key -> output URL (or None). Prints progress like the old loops did.
+
+    Supports _job_update: if get_status returns a "_job_update" key, the job id
+    is replaced with the updated value (for two-phase providers like Agnes AI
+    that submit a task on first poll then poll it on subsequent calls).
     """
     st = {}
     for key, submit in specs.items():
@@ -114,6 +127,10 @@ def run_jobs(prov, specs, *, poll_s=3, stall_s=90, max_retries=2, deadline_s=900
             s = st[key]
             r = prov.get_status(s["pid"])
             status = r["status"]
+            # Update job id if provider returned an updated state
+            if r.get("_job_update"):
+                s["pid"] = r["_job_update"]
+                s["t"] = time.time()  # reset stall timer on phase change
             if status == "completed":
                 done[key] = r["output"]
                 print(f"[{key}] done")
