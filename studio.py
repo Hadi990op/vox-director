@@ -958,7 +958,7 @@ function renderJob(j) {
   let video = '';
   if (j.status === 'done' && j.result_video) {
     video = `<div class="video-result">
-      <video controls src="api/video/${j.id}" style="width:100%;border-radius:8px;"></video>
+      <video controls preload="metadata" src="api/video/${j.id}" style="width:100%;border-radius:8px;"></video>
       <div style="margin-top:8px;display:flex;gap:8px;">
         <a href="api/video/${j.id}" download style="display:inline-block;padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:var(--card2);color:var(--text);text-decoration:none;">⬇️ Download</a>
         <button onclick="uploadToYT('${j.id}')" style="display:inline-block;width:auto;padding:8px 16px;">📤 Upload to YouTube</button>
@@ -1563,7 +1563,11 @@ def api_delete(job_id):
 @app.route("/api/video/<job_id>")
 def api_video(job_id):
     if job_id in jobs and jobs[job_id].get("result_video"):
-        return send_file(jobs[job_id]["result_video"], mimetype="video/mp4")
+        path = jobs[job_id]["result_video"]
+        resp = send_file(path, mimetype="video/mp4", conditional=True)
+        resp.headers["Accept-Ranges"] = "bytes"
+        resp.headers["Cache-Control"] = "public, max-age=3600"
+        return resp
     return jsonify({"error": "Video not found"}), 404
 
 @app.route("/api/upload-yt/<job_id>", methods=["POST"])
