@@ -17,7 +17,7 @@ import sys
 import text_overlay
 import sfx
 
-FPS, TAIL = 24, 0.5
+FPS, TAIL = 24, 1.0
 WATERMARK = "Made with Atlas Cloud · vox-director"
 RES = {"16:9": (1920, 1080), "9:16": (1080, 1920), "1:1": (1080, 1080)}
 
@@ -78,11 +78,20 @@ def run(project_dir):
     for beat in beats:
         beat_start = t
         shot_list = list(shots_of(beat))
-        # ensure the beat covers its narration (extend last shot if needed)
         durs = [float(s.get("dur", 10)) for s in shot_list]
-        need = float(beat.get("narration_dur", sum(durs))) + TAIL
-        if sum(durs) < need:
-            durs[-1] += need - sum(durs)
+        # Keep beats tight: narration duration + small gap (1.0s) for natural
+        # breathing room between sentences. This avoids long silent stretches
+        # where narration is 3s but the beat is 7s.
+        narr_dur = float(beat.get("narration_dur", sum(durs)))
+        target_beat = narr_dur + TAIL
+        # If current shot durations exceed target, trim them proportionally
+        current_total = sum(durs)
+        if current_total > target_beat:
+            scale = target_beat / current_total
+            durs = [d * scale for d in durs]
+        # If current shot durations are less than target, extend last shot
+        elif current_total < target_beat:
+            durs[-1] += target_beat - current_total
         for s, d in zip(shot_list, durs):
             clip = s.get("clip_path", "")
             # Verify clip exists — if not, generate a Ken Burns fallback from keyframe

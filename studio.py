@@ -1111,7 +1111,7 @@ def api_create():
         jobs[job_id] = {
             "id": job_id,
             "topic": topic,
-            "duration": sum(s.get("dur", 5) for b in beats.get("beats", []) for s in b.get("shots", [])),
+            "duration": sum(float(s.get("dur", 5)) for b in beats.get("beats", []) for s in b.get("shots", [])),
             "aspect": beats.get("aspect", "16:9"),
             "theme": beats.get("theme", "unknown"),
             "status": "keyframes",
