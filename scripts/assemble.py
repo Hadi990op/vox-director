@@ -15,6 +15,7 @@ import subprocess
 import sys
 
 import text_overlay
+import sfx
 
 FPS, TAIL = 24, 0.5
 WATERMARK = "Made with Atlas Cloud · vox-director"
@@ -83,9 +84,9 @@ def run(project_dir):
         if sum(durs) < need:
             durs[-1] += need - sum(durs)
         for s, d in zip(shot_list, durs):
-            clip = s["clip_path"]
+            clip = s.get("clip_path", "")
             # Verify clip exists — if not, generate a Ken Burns fallback from keyframe
-            if not os.path.exists(clip):
+            if not clip or not os.path.exists(clip):
                 kf = s.get("keyframe_path", "")
                 if kf and os.path.exists(kf):
                     fallback = os.path.join(tmp, f"fallback_{seg_idx:02d}.mp4")
@@ -158,6 +159,25 @@ def run(project_dir):
     bgm_idx = narr_base + nb
     inputs += ["-i", doc["bgm_path"]]
 
+    # ---- 4b) SFX: generate sound effects and add as inputs ----
+    sfx_enabled = doc.get("sfx", True)          # "sfx": false -> no SFX
+    sfx_cues = []
+    sfx_files = {}
+    if sfx_enabled:
+        try:
+            sfx_files = sfx.generate_sfx(project_dir)
+            sfx_cues = sfx.get_sfx_for_beats(beat_spans)
+            print(f"[sfx] {len(sfx_cues)} cues from {len(sfx_files)} files")
+        except Exception as e:
+            print(f"[sfx] WARNING: SFX generation failed: {e}")
+            sfx_enabled = False
+
+    # Add SFX files as inputs (deduplicated — each type is one input)
+    sfx_input_idx = {}   # sfx_type -> ffmpeg input index
+    for sfx_type, sfx_path in sfx_files.items():
+        sfx_input_idx[sfx_type] = len(inputs) // 2
+        inputs += ["-i", sfx_path]
+
     chain, prev = [], "[0:v]"
     for i, bs in enumerate(beat_spans[:ncap]):
         s, e = bs["start"] + 0.2, bs["start"] + bs["dur"] - 0.1
@@ -179,7 +199,31 @@ def run(project_dir):
     chain.append("[narrmix]asplit=2[narrA][narrB]")
     chain.append(f"[{bgm_idx}:a]atrim=0:{total},volume={music_vol},afade=t=out:st={max(total-2,0):.2f}:d=2[bgt]")
     chain.append("[bgt][narrA]sidechaincompress=threshold=0.02:ratio=12:attack=5:release=350[bgd]")
-    chain.append(f"[narrB][bgd]amix=inputs=2:normalize=0:duration=longest,volume=1.8,atrim=0:{total}[a]")
+
+    # ---- SFX: delay each cue to its start time, mix together ----
+    if sfx_enabled and sfx_cues:
+        sfx_labels = []
+        for i, cue in enumerate(sfx_cues):
+            sidx = sfx_input_idx.get(cue["type"])
+            if sidx is None:
+                continue
+            ms = int(cue["start"] * 1000)
+            vol = cue.get("vol", 0.3)
+            lbl = f"[sx{i}]"
+            chain.append(f"[{sidx}:a]adelay={ms}:all=1,volume={vol}{lbl}")
+            sfx_labels.append(lbl)
+        if sfx_labels:
+            if len(sfx_labels) == 1:
+                chain.append(f"{sfx_labels[0]}anull[sfxmix]")
+            else:
+                chain.append(f"{''.join(sfx_labels)}amix=inputs={len(sfx_labels)}:normalize=0:duration=longest[sfxmix]")
+            # Mix SFX into the final audio: narration + bgm(ducked) + sfx
+            chain.append(f"[narrB][bgd]amix=inputs=2:normalize=0:duration=longest[a_narr_bg]")
+            chain.append(f"[a_narr_bg][sfxmix]amix=inputs=2:normalize=0:duration=longest,volume=1.8,atrim=0:{total}[a]")
+        else:
+            chain.append(f"[narrB][bgd]amix=inputs=2:normalize=0:duration=longest,volume=1.8,atrim=0:{total}[a]")
+    else:
+        chain.append(f"[narrB][bgd]amix=inputs=2:normalize=0:duration=longest,volume=1.8,atrim=0:{total}[a]")
     filt = ";".join(chain)
 
     final = os.path.join(project_dir, "final.mp4")

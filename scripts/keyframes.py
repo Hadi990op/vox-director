@@ -15,6 +15,7 @@ import sys
 
 from provider import get_provider, run_jobs
 from styles import compose_keyframe_prompt, compose_collage_prompt, resolve_theme, image_params
+import collage_post
 
 IMAGE_MODEL = "google/nano-banana-2/text-to-image"
 
@@ -69,6 +70,11 @@ def run(project_dir):
 
     done = run_jobs(prov, specs, poll_s=3, stall_s=75, max_retries=2, deadline_s=300)
 
+    # Whether to apply collage post-processing (default: True for free provider)
+    use_collage_post = doc.get("provider", "free") == "free"
+    if doc.get("collage_post") is not None:
+        use_collage_post = doc.get("collage_post")
+
     for key, url in done.items():
         if not url:
             continue
@@ -77,7 +83,24 @@ def run(project_dir):
         shot = by_key[key]
         shot["keyframe_url"] = url
         shot["keyframe_path"] = dest
-        print(f"[{key}] saved {dest}")
+
+        # Apply collage post-processing for Vox-style look (free provider)
+        if use_collage_post:
+            beat = shot if "title_en" in shot else next(
+                (b for b in doc["beats"]
+                 if any(s.get("id") == shot.get("id") for s in (b.get("shots") or [b]))),
+                None)
+            if beat is None:
+                beat = shot
+            bg = beat.get("bg", "warm ochre") if isinstance(beat, dict) else "warm ochre"
+            headline = beat.get("title_en", "") if shot.get("title", True) else ""
+            try:
+                collage_post.apply_collage_effect(dest, dest, bg_color=bg, headline=headline)
+                print(f"[{key}] saved {dest} (collage post-processed)")
+            except Exception as e:
+                print(f"[{key}] saved {dest} (collage post FAILED: {e})")
+        else:
+            print(f"[{key}] saved {dest}")
 
     with open(bpath, "w") as f:
         json.dump(doc, f, ensure_ascii=False, indent=2)

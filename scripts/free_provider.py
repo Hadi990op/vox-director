@@ -123,7 +123,23 @@ def _curl(url, dest, timeout=120, retries=3):
              "-m", str(timeout), "-o", dest, url],
             capture_output=True, text=True)
         if os.path.exists(dest) and os.path.getsize(dest) > 100:
-            return dest
+            # Verify it's actually an image (not a JSON error response)
+            try:
+                from PIL import Image
+                img = Image.open(dest)
+                img.verify()  # verify it's a valid image
+                return dest
+            except Exception:
+                # Not a valid image — Pollinations returned an error JSON
+                # On retry, change the seed slightly to get a different result
+                if attempt < retries - 1 and "seed=" in url:
+                    import random
+                    new_seed = random.randint(1, 999999)
+                    url = url.split("seed=")[0] + f"seed={new_seed}&nologo=true"
+                    print(f"      [pollinations] retry {attempt+1} with new seed (got non-image)")
+                os.remove(dest)
+                time.sleep(3 * (attempt + 1))
+                continue
         time.sleep(2 * (attempt + 1))
     raise FreeProviderError(f"download failed: {url} -> {dest} ({r.stderr[:200]})")
 
@@ -262,7 +278,11 @@ class FreeProvider:
         model_name = model.split("/")[-1] if "/" in model else model
         if model_name not in ("flux", "turbo", "sana", "stable-diffusion"):
             model_name = DEFAULT_IMAGE_MODEL
-        seed = params.get("seed", int(time.time()) % 100000)
+        # Generate a unique seed per prompt (hash of prompt + random) so
+        # different scenes get different images even when submitted together.
+        import hashlib
+        prompt_hash = int(hashlib.md5(prompt.encode()).hexdigest()[:8], 16)
+        seed = params.get("seed", prompt_hash + int(time.time()) % 1000)
         encoded = urllib.parse.quote(prompt, safe="")
         url = (f"{POLLINATIONS_BASE}/{encoded}"
                f"?width={w}&height={h}&model={model_name}&seed={seed}&nologo=true")
@@ -363,7 +383,7 @@ class FreeProvider:
             # The download() call in keyframes.py will curl it to keyframe_path.
             tmp = "/tmp/free_img_%d.jpg" % int(time.time() * 1000)
             try:
-                _curl(job["url"], tmp, timeout=90)
+                _curl(job["url"], tmp, timeout=90, retries=4)
                 # Return the PUBLIC url (not local path) so keyframe_url is
                 # a public URL that Agnes AI can use for image-to-video.
                 return {"status": "completed", "output": job["url"], "error": None}
@@ -612,36 +632,59 @@ def _resolve_edge_voice(voice_id, language):
 # ------------------------------------------------------------------ BGM
 
 def _make_bgm(dest, duration=60):
-    """Generate a simple ambient background music track with ffmpeg.
+    """Generate a richer ambient background music track with ffmpeg.
 
-    Creates a soft pad (two detuned sine waves) with a gentle envelope —
-    not as rich as minimax/music but free and works as a duckable bed.
+    Creates a multi-layer ambient bed:
+    - Low drone (C2) for warmth
+    - Mid pad (G3 + C4) for body
+    - Subtle high shimmer (E5) for air
+    - Gentle rhythmic pulse (tremolo) for movement
+    All layered, low-passed, and faded.  Free, no API.
     """
-    # A soft ambient pad: two sine waves at C3 and G3, slightly detuned,
-    # with a low-pass filter and gentle fade.  ~130 BPM implied.
+    d = duration
+    # Multi-layer synth pad with tremolo for subtle movement
+    filter_complex = (
+        # Layer 1: deep drone
+        f"sine=frequency=65.41:duration={d}[drone];"
+        # Layer 2: warm pad (C3 + G3)
+        f"sine=frequency=130.81:duration={d}[pad1];"
+        f"sine=frequency=196.00:duration={d}[pad2];"
+        # Layer 3: high air (E5, very quiet)
+        f"sine=frequency=659.25:duration={d}[air];"
+        # Mix pad layers
+        f"[pad1][pad2]amix=inputs=2:duration=longest[padmix];"
+        # Add tremolo for subtle movement
+        f"[padmix]tremolo=f=0.5:d=0.3[padtrem];"
+        # Air layer — very quiet, low-passed
+        f"[air]volume=0.05,lowpass=f=2000[airq];"
+        # Final mix: drone + pad + air
+        f"[drone]volume=0.4[dq];"
+        f"[padtrem]volume=0.25[pq];"
+        f"[dq][pq][airq]amix=inputs=3:duration=longest,"
+        # Master processing
+        f"lowpass=f=1200,"
+        f"afade=t=in:st=0:d=3,"
+        f"afade=t=out:st={max(d-4,0)}:d=4,"
+        f"volume=0.8"
+    )
     cmd = [
         "ffmpeg", "-y",
-        "-f", "lavfi", "-i",
-        # Layer 1: low drone
-        f"sine=frequency=130.81:duration={duration},"
-        # Layer 2: fifth above, detuned
-        f"amix=inputs=2:duration=longest[a1];"
-        f"sine=frequency=196.00:duration={duration}[a2];"
-        f"[a1][a2]amix=inputs=2:duration=longest,volume=0.3,"
-        "lowpass=f=800,afade=t=in:st=0:d=2,afade=t=out:st="
-        f"{max(duration-3,0)}:d=3",
+        "-f", "lavfi", "-i", filter_complex,
         "-ac", "2", "-c:a", "libmp3lame", "-q:a", "5",
         dest,
     ]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
-        # Fallback: even simpler single tone
+        # Fallback: simpler 2-layer pad
         cmd2 = [
             "ffmpeg", "-y", "-f", "lavfi", "-i",
-            f"sine=frequency=130:duration={duration}",
-            "-af", "volume=0.2,lowpass=f=600,"
-            f"afade=t=in:st=0:d=2,afade=t=out:st={max(duration-3,0)}:d=3",
-            "-c:a", "libmp3lame", "-q:a", "5", dest,
+            f"sine=frequency=130.81:duration={d},"
+            f"amix=inputs=2:duration=longest[a1];"
+            f"sine=frequency=196.00:duration={d}[a2];"
+            f"[a1][a2]amix=inputs=2:duration=longest,volume=0.3,"
+            f"lowpass=f=800,afade=t=in:st=0:d=2,"
+            f"afade=t=out:st={max(d-3,0)}:d=3",
+            "-ac", "2", "-c:a", "libmp3lame", "-q:a", "5", dest,
         ]
         r2 = subprocess.run(cmd2, capture_output=True, text=True)
         if r2.returncode != 0:

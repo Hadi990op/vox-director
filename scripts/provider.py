@@ -110,41 +110,86 @@ def run_jobs(prov, specs, *, poll_s=3, stall_s=90, max_retries=2, deadline_s=900
     Supports _job_update: if get_status returns a "_job_update" key, the job id
     is replaced with the updated value (for two-phase providers like Agnes AI
     that submit a task on first poll then poll it on subsequent calls).
+
+    For the free provider, image jobs are synchronous (download on first poll).
+    To speed this up, we use a thread pool to poll multiple jobs in parallel.
     """
+    import concurrent.futures
+
     st = {}
     for key, submit in specs.items():
         st[key] = {"pid": submit(), "t": time.time(), "tries": 0}
-        print(f"[{key}] submitted {st[key]['pid']}")
+        print(f"[{key}] submitted {st[key]['pid'][:80]}...")
 
     done = {}
     deadline = time.time() + deadline_s
+
+    # Use a thread pool to poll jobs in parallel (greatly speeds up free provider
+    # where each image download takes ~30s sequentially).
+    def poll_one(key_submit):
+        key, submit = key_submit
+        if key in done:
+            return key, "skip", None
+        s = st[key]
+        try:
+            r = prov.get_status(s["pid"])
+        except Exception as e:
+            return key, "error", str(e)
+        status = r["status"]
+        if r.get("_job_update"):
+            s["pid"] = r["_job_update"]
+            s["t"] = time.time()
+        if status == "completed":
+            return key, "completed", r["output"]
+        elif status == "failed":
+            return key, "failed", r.get("error", "")
+        elif status == "pending" and time.time() - s["t"] > stall_s:
+            return key, "stalled", None
+        return key, "pending", None
+
     while len(done) < len(specs) and time.time() < deadline:
         time.sleep(poll_s)
-        now = time.time()
-        for key, submit in specs.items():
-            if key in done:
-                continue
-            s = st[key]
-            r = prov.get_status(s["pid"])
-            status = r["status"]
-            # Update job id if provider returned an updated state
-            if r.get("_job_update"):
-                s["pid"] = r["_job_update"]
-                s["t"] = time.time()  # reset stall timer on phase change
-            if status == "completed":
-                done[key] = r["output"]
-                print(f"[{key}] done")
-            elif status == "failed" or (status == "pending" and now - s["t"] > stall_s):
-                if s["tries"] < max_retries:
-                    s["tries"] += 1
-                    s["pid"] = submit()
-                    s["t"] = time.time()
-                    why = "failed" if status == "failed" else f"stalled>{int(stall_s)}s"
-                    print(f"[{key}] {why} -> resubmit #{s['tries']} ({s['pid']})")
-                elif status == "failed":
-                    done[key] = None
-                    print(f"[{key}] FAILED: {(r.get('error') or '')[:120]}")
-                # stalled + out of retries: keep waiting until the deadline
+        # Poll all pending jobs in parallel
+        pending_keys = [(k, v) for k, v in specs.items() if k not in done]
+        if not pending_keys:
+            break
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(pending_keys), 8)) as ex:
+            futures = {ex.submit(poll_one, ks): ks[0] for ks in pending_keys}
+            for fut in concurrent.futures.as_completed(futures):
+                key = futures[fut]
+                try:
+                    k, status, output = fut.result()
+                except Exception as e:
+                    print(f"[{key}] poll error: {e}")
+                    continue
+                if k in done:
+                    continue
+                if status == "completed":
+                    done[k] = output
+                    print(f"[{k}] done")
+                elif status == "failed" or status == "stalled":
+                    s = st[k]
+                    if s["tries"] < max_retries:
+                        s["tries"] += 1
+                        s["pid"] = specs[k]()
+                        s["t"] = time.time()
+                        why = "failed" if status == "failed" else f"stalled>{int(stall_s)}s"
+                        print(f"[{k}] {why} -> resubmit #{s['tries']}")
+                    elif status == "failed":
+                        done[k] = None
+                        print(f"[{k}] FAILED: {(output or '')[:120]}")
+                elif status == "error":
+                    s = st[k]
+                    if s["tries"] < max_retries:
+                        s["tries"] += 1
+                        s["pid"] = specs[k]()
+                        s["t"] = time.time()
+                        print(f"[{k}] poll error -> resubmit #{s['tries']}: {output[:80]}")
+                    else:
+                        done[k] = None
+                        print(f"[{k}] FAILED (poll errors): {output[:120]}")
+
     for key in specs:
         done.setdefault(key, None)
     return done

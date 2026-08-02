@@ -1455,9 +1455,29 @@ def _generate_template_beats(topic, duration, aspect, theme, arc, language, voic
         feels = ["curious", "intense", "hopeful", "dramatic", "revealing", "reflective", "energetic", "cinematic"]
         feel = feels[i % len(feels)]
 
-        # Scene descriptions
-        scene_a = f"Wide establishing shot of {topic.lower()} as paper collage, bold shapes, layered paper textures, {feel} mood"
-        scene_b = f"Close-up detail of {topic.lower()} — cut paper elements, intricate patterns, focused composition"
+        # Scene descriptions — unique per beat, describing a specific moment
+        scene_templates_a = [
+            f"Wide shot: the origins of {topic.lower()}, ancient setting, historical figures, bold cut-out shapes, {feel} mood",
+            f"Wide shot: early development of {topic.lower()}, people discovering and exploring, paper textures, {feel} mood",
+            f"Wide shot: a breakthrough moment for {topic.lower()}, dramatic scene with key objects, {feel} mood",
+            f"Wide shot: {topic.lower()} spreading across the world, maps and globes as paper cut-outs, {feel} mood",
+            f"Wide shot: modern era of {topic.lower()}, technology and progress, bold graphic elements, {feel} mood",
+            f"Wide shot: the global impact of {topic.lower()} today, crowd of people, symbols and icons, {feel} mood",
+            f"Wide shot: cultural significance of {topic.lower()}, artistic elements, museums and galleries, {feel} mood",
+            f"Wide shot: future of {topic.lower()}, futuristic paper cut-out shapes, {feel} mood",
+        ]
+        scene_templates_b = [
+            f"Close-up: intricate detail of {topic.lower()} — hands working, tools, paper cut-out textures",
+            f"Close-up: a key object from {topic.lower()} — zoomed in, fine patterns, focused composition",
+            f"Close-up: a person's face reacting to {topic.lower()} — expressive, paper cut-out portrait",
+            f"Close-up: text and headlines about {topic.lower()} — newspaper clipping, bold typography",
+            f"Close-up: mechanical or technical detail of {topic.lower()} — gears, circuits, paper shapes",
+            f"Close-up: celebration or reaction to {topic.lower()} — confetti, movement, energy",
+            f"Close-up: a map or diagram about {topic.lower()} — paper cut-out chart, bold colors",
+            f"Close-up: the final reveal of {topic.lower()} — dramatic detail, high contrast",
+        ]
+        scene_a = scene_templates_a[i % len(scene_templates_a)]
+        scene_b = scene_templates_b[i % len(scene_templates_b)]
 
         # Element motion
         motion_a = motions[i % len(motions)]
