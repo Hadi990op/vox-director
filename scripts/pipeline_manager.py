@@ -235,19 +235,20 @@ def manage_pipeline(project_dir, max_step_retries=3, progress_callback=None):
         size_mb = final_video_path.stat().st_size / 1024 / 1024
         log(f"🎉 Pipeline complete! final.mp4 ({size_mb:.1f} MB)")
 
-        # ─── Generate thumbnail ───
+        # ─── Generate thumbnail (Thumbnail Intelligence System) ───
         try:
-            log("🎨 Generating thumbnail...")
+            log("🧠 Generating thumbnail (AI concept + visual storytelling)...")
             thumb_script = BASE_DIR / "scripts" / "thumbnail_builder.py"
             if thumb_script.exists():
                 import subprocess as sp
                 env = os.environ.copy()
                 env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
                 result_thumb = sp.run(
-                    [sys.executable, str(thumb_script), str(project_dir), "--variation", "1"],
-                    capture_output=True, text=True, timeout=60, env=env
+                    [sys.executable, str(thumb_script), str(project_dir),
+                     "--concepts", "5", "--concept", "0"],
+                    capture_output=True, text=True, timeout=300, env=env
                 )
-                thumb_path = project_dir / "thumbnail_v1.jpg"
+                thumb_path = project_dir / "thumbnail.jpg"
                 if thumb_path.exists():
                     log(f"   ✅ Thumbnail: {thumb_path}")
                 else:

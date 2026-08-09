@@ -1180,10 +1180,10 @@ async function uploadToYT(id) {
 async function generateThumbnail(id) {
   const area = document.getElementById('thumb-area-' + id);
   if (!area) return;
-  area.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">🎨 Generating thumbnail (AI overlay text)...</div>';
+  area.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">🧠 Generating thumbnail concepts (AI visual storytelling)...<br><small style="font-size:11px;">This takes ~60-90s — AI creates 5 different concepts, picks the best, and generates the image</small></div>';
   try {
     const meta = ytMetadata[id] || {};
-    const body = { variation: 1 };
+    const body = { concepts: 5 };
     if (meta.title) body.title = meta.title;
     const res = await fetch('api/thumbnail/' + id, {
       method: 'POST',
@@ -1192,7 +1192,11 @@ async function generateThumbnail(id) {
     });
     const data = await res.json();
     if (data.ok) {
-      area.innerHTML = renderThumbPreview(id, data.thumbnail, 1);
+      // Fetch full concepts list
+      const conceptsRes = await fetch('api/thumbnail/' + id + '/concepts');
+      let concepts = [];
+      if (conceptsRes.ok) concepts = await conceptsRes.json();
+      area.innerHTML = renderConceptPreview(id, concepts);
     } else {
       area.innerHTML = '<div style="color:var(--accent);font-size:13px;">❌ ' + (data.error||'Failed') + '</div>';
     }
@@ -1201,43 +1205,69 @@ async function generateThumbnail(id) {
   }
 }
 
-async function generateThumbnailVariation(id, variation) {
-  const area = document.getElementById('thumb-area-' + id);
-  if (!area) return;
-  area.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">🎨 Generating layout ' + variation + '...</div>';
+async function generateConceptImage(id, conceptIdx, conceptName) {
+  const card = document.getElementById('concept-card-' + conceptIdx);
+  if (!card) return;
+  card.style.opacity = '0.5';
+  card.innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted);">🎨 Generating "' + conceptName + '" image...<br><small>takes ~20-30s</small></div>';
   try {
-    const meta = ytMetadata[id] || {};
-    const body = { variation: variation };
-    if (meta.title) body.title = meta.title;
-    const res = await fetch('api/thumbnail/' + id, {
+    const res = await fetch('api/thumbnail/' + id + '/concept/' + conceptIdx, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
+      body: '{}'
     });
     const data = await res.json();
     if (data.ok) {
-      area.innerHTML = renderThumbPreview(id, data.thumbnail, variation);
+      const conceptsRes = await fetch('api/thumbnail/' + id + '/concepts');
+      let concepts = [];
+      if (conceptsRes.ok) concepts = await conceptsRes.json();
+      const area = document.getElementById('thumb-area-' + id);
+      if (area && concepts.length) area.innerHTML = renderConceptPreview(id, concepts);
     } else {
-      area.innerHTML = '<div style="color:var(--accent);font-size:13px;">❌ ' + (data.error||'Failed') + '</div>';
+      card.style.opacity = '1';
+      card.innerHTML = '<div style="color:var(--accent);font-size:13px;">❌ ' + (data.error||'Failed') + '</div>';
     }
   } catch(e) {
-    area.innerHTML = '<div style="color:var(--accent);font-size:13px;">❌ Error: ' + e.message + '</div>';
+    card.style.opacity = '1';
+    card.innerHTML = '<div style="color:var(--accent);font-size:13px;">❌ Error: ' + e.message + '</div>';
   }
 }
 
-function renderThumbPreview(id, thumbUrl, variation) {
-  return `
-    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;">
-      <img src="${thumbUrl}?t=${Date.now()}" style="width:320px;border-radius:8px;border:1px solid var(--border);" alt="Thumbnail">
-      <div style="flex:1;min-width:200px;">
-        <div style="display:flex;gap:6px;flex-wrap:wrap;">
-          <button onclick="generateThumbnailVariation('${id}',1)" style="padding:6px 12px;font-size:12px;background:${variation==1?'var(--accent)':'var(--card2)'};border:1px solid var(--border);border-radius:6px;color:${variation==1?'#fff':'var(--text)'};">Layout 1</button>
-          <button onclick="generateThumbnailVariation('${id}',2)" style="padding:6px 12px;font-size:12px;background:${variation==2?'var(--accent)':'var(--card2)'};border:1px solid var(--border);border-radius:6px;color:${variation==2?'#fff':'var(--text)'};">Layout 2</button>
-          <button onclick="generateThumbnailVariation('${id}',3)" style="padding:6px 12px;font-size:12px;background:${variation==3?'var(--accent)':'var(--card2)'};border:1px solid var(--border);border-radius:6px;color:${variation==3?'#fff':'var(--text)'};">Layout 3</button>
-        </div>
-        <div style="margin-top:8px;font-size:12px;color:var(--muted);">Layout ${variation} — Image ${variation==1?'right':variation==2?'center+banner':'left'}, text ${variation==1?'left':variation==2?'on banner':'right'}</div>
-      </div>
-    </div>`;
+function renderConceptPreview(id, concepts) {
+  if (!concepts || concepts.length === 0) {
+    return '<div style="color:var(--muted);font-size:13px;">No concepts generated. Try again.</div>';
+  }
+  let html = '<div style="margin-bottom:10px;font-size:13px;color:var(--muted);">🧠 <b>' + concepts.length + ' AI concepts generated</b> — click a concept without an image to generate it</div>';
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;">';
+  concepts.forEach((c, i) => {
+    const thumbUrl = '/vox/api/thumb/' + id + '/concept_' + i;
+    const hasImg = c._has_image || false;
+    const textFnColors = {'question':'#ffd700','contradiction':'#ff5050','revelation':'#ffd700','accusation':'#ff3232','warning':'#ff8c00','shock':'#ffffff'};
+    const textColor = textFnColors[(c.text_function||'').toLowerCase()] || '#ffd700';
+    html += '<div id="concept-card-' + i + '" style="background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:12px;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">';
+    html += '<div><b style="font-size:14px;">' + (c.concept_name||'Concept '+(i+1)) + '</b>';
+    html += ' <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:var(--accent);color:#fff;">' + (c.concept_type||'?') + '</span></div>';
+    html += '</div>';
+    if (hasImg) {
+      html += '<img src="' + thumbUrl + '?t=' + Date.now() + '" style="width:100%;border-radius:6px;border:1px solid var(--border);margin-bottom:8px;display:block;" alt="Thumbnail">';
+    } else {
+      html += '<button data-job="'+id+'" data-idx="'+i+'" onclick="var b=this;generateConceptImage(b.getAttribute(\"data-job\"),parseInt(b.getAttribute(\"data-idx\")),\"\");" style="width:100%;padding:20px;background:var(--card);border:2px dashed var(--border);border-radius:6px;cursor:pointer;font-size:13px;color:var(--muted);margin-bottom:8px;">🎨 Generate Image</button>';
+    }
+    html += '<div style="font-size:12px;line-height:1.6;color:var(--text);">';
+    html += '<div style="margin-bottom:4px;"><b style="color:' + textColor + ';font-size:16px;">"' + (c.text||'') + '"</b> <span style="font-size:10px;color:var(--muted);">(' + (c.text_function||'') + ')</span></div>';
+    html += '<div><b>Hero:</b> ' + (c.hero||'') + '</div>';
+    if (c.hero_expression) html += '<div><b>Expression:</b> ' + c.hero_expression + '</div>';
+    if (c.support && c.support.length) html += '<div><b>Support:</b> ' + c.support.join(', ') + '</div>';
+    html += '<div><b>CTR:</b> ' + (c.ctr_mechanism||'') + '</div>';
+    html += '<div><b>Gap:</b> ' + (c.info_gap||'') + '</div>';
+    if (c.emotional_trigger) html += '<div><b>Emotion:</b> ' + c.emotional_trigger + '</div>';
+    html += '<div><b>Colors:</b> ' + ((c.color_palette||[]).join(', ')) + '</div>';
+    html += '</div>';
+    html += '</div>';
+  });
+  html += '</div>';
+  return html;
 }
 
 pollJobs();
@@ -2280,7 +2310,17 @@ def api_upload_yt(job_id):
 
 @app.route("/api/thumbnail/<job_id>", methods=["POST"])
 def api_generate_thumbnail(job_id):
-    """Generate or regenerate a YouTube thumbnail for a video project."""
+    """Generate YouTube thumbnail concepts using the Thumbnail Intelligence System.
+
+    POST body:
+      - title: video title (optional, falls back to beats.json)
+      - concepts: number of concepts to generate (default 5)
+
+    Returns:
+      - ok: true
+      - concepts: list of concept blueprints
+      - thumbnails: list of generated thumbnail URLs (concept images)
+    """
     if job_id not in jobs:
         return jsonify({"error": "Job not found"}), 404
 
@@ -2289,8 +2329,8 @@ def api_generate_thumbnail(job_id):
         return jsonify({"error": "Project directory not found"}), 404
 
     data = request.json or {}
-    variation = data.get("variation", 1)
     title = data.get("title", "")
+    num_concepts = data.get("concepts", 5)
 
     thumb_script = SCRIPTS / "thumbnail_builder.py"
     if not thumb_script.exists():
@@ -2298,39 +2338,112 @@ def api_generate_thumbnail(job_id):
 
     cmd = [
         sys.executable, str(thumb_script), str(project_dir),
-        "--variation", str(variation),
+        "--concepts", str(num_concepts),
+        "--concept", "0",  # generate first concept's image
     ]
     if title:
         cmd += ["--title", title]
 
     env = os.environ.copy()
     env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=90, env=env)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env)
 
-    if result.returncode == 0:
-        thumb_path = project_dir / f"thumbnail_v{variation}.jpg"
-        if thumb_path.exists():
-            return jsonify({
-                "ok": True,
-                "thumbnail": f"/vox/api/thumb/{job_id}/{variation}",
-                "output": result.stdout[-300:]
-            })
-    return jsonify({"error": result.stderr[-300:] or result.stdout[-300:]}), 500
+    if result.returncode != 0:
+        return jsonify({"error": result.stderr[-500:] or result.stdout[-500:]}), 500
+
+    # Load generated concepts
+    concepts_path = project_dir / "thumbnail_concepts.json"
+    concepts = []
+    if concepts_path.exists():
+        try:
+            concepts = json.loads(concepts_path.read_text())
+        except Exception:
+            pass
+
+    return jsonify({
+        "ok": True,
+        "concepts": concepts,
+        "thumbnail": f"/vox/api/thumb/{job_id}/main",
+        "output": result.stdout[-500:]
+    })
 
 
-@app.route("/api/thumb/<job_id>/<variation>")
-def api_serve_thumbnail(job_id, variation):
-    """Serve a generated thumbnail image."""
+@app.route("/api/thumbnail/<job_id>/concept/<int:concept_idx>", methods=["POST"])
+def api_generate_concept_image(job_id, concept_idx):
+    """Generate a thumbnail image for a specific concept (when user selects one)."""
+    if job_id not in jobs:
+        return jsonify({"error": "Job not found"}), 404
+
+    project_dir = Path(jobs[job_id].get("project_dir", ""))
+    if not project_dir.exists():
+        return jsonify({"error": "Project directory not found"}), 404
+
+    thumb_script = SCRIPTS / "thumbnail_builder.py"
+    cmd = [
+        sys.executable, str(thumb_script), str(project_dir),
+        "--use-concept", str(concept_idx),
+    ]
+
+    env = os.environ.copy()
+    env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env)
+
+    if result.returncode != 0:
+        return jsonify({"error": result.stderr[-500:] or result.stdout[-500:]}), 500
+
+    return jsonify({
+        "ok": True,
+        "thumbnail": f"/vox/api/thumb/{job_id}/concept_{concept_idx}",
+        "output": result.stdout[-300:]
+    })
+
+
+@app.route("/api/thumb/<job_id>/<thumb_id>")
+def api_serve_thumbnail(job_id, thumb_id):
+    """Serve a generated thumbnail image.
+
+    thumb_id can be:
+      - "main" → thumbnail.jpg
+      - "concept_N" → thumbnail_concept_N.jpg
+      - numeric (legacy) → thumbnail_vN.jpg
+    """
     if job_id not in jobs:
         return "Not found", 404
     project_dir = Path(jobs[job_id].get("project_dir", ""))
-    thumb_path = project_dir / f"thumbnail_v{variation}.jpg"
-    if not thumb_path.exists():
-        # Also check without _v suffix (default)
+
+    if thumb_id == "main":
         thumb_path = project_dir / "thumbnail.jpg"
+    elif thumb_id.startswith("concept_"):
+        thumb_path = project_dir / f"thumbnail_{thumb_id}.jpg"
+    else:
+        # Legacy: thumbnail_v{N}.jpg
+        thumb_path = project_dir / f"thumbnail_v{thumb_id}.jpg"
+        if not thumb_path.exists():
+            thumb_path = project_dir / "thumbnail.jpg"
+
     if not thumb_path.exists():
         return "Thumbnail not found", 404
     return send_file(str(thumb_path), mimetype="image/jpeg")
+
+
+@app.route("/api/thumbnail/<job_id>/concepts")
+def api_get_concepts(job_id):
+    """Get saved thumbnail concepts for a job."""
+    if job_id not in jobs:
+        return jsonify({"error": "Job not found"}), 404
+    project_dir = Path(jobs[job_id].get("project_dir", ""))
+    concepts_path = project_dir / "thumbnail_concepts.json"
+    if not concepts_path.exists():
+        return jsonify([])
+    try:
+        concepts = json.loads(concepts_path.read_text())
+        # Mark which concepts have generated images
+        for i, c in enumerate(concepts):
+            img_path = project_dir / f"thumbnail_concept_{i}.jpg"
+            c["_has_image"] = img_path.exists()
+        return jsonify(concepts)
+    except Exception:
+        return jsonify([])
 
 
 @app.route("/api/upload-status/<job_id>")
