@@ -1178,39 +1178,57 @@ async function uploadToYT(id) {
 pollJobs();
 setInterval(pollJobs, 10000);
 
-// === Composio OAuth Status ===
+// === YouTube Connection Status ===
 async function checkComposio() {
-  console.log('[composio] checking status...');
+  console.log('[yt] checking YouTube connection status...');
   try {
-    const res = await fetch('api/composio/status', {cache: 'no-store'});
-    console.log('[composio] status response:', res.status);
+    const res = await fetch('api/yt/status', {cache: 'no-store'});
     const data = await res.json();
-    console.log('[composio] status data:', data);
     const el = document.getElementById('composio-status');
-    if (!el) { console.error('[composio] element not found!'); return; }
-    if (data.needs_auth) {
-      el.innerHTML = '<button onclick="connectComposio()" style="padding:8px 20px;border-radius:8px;border:1px solid var(--accent);background:var(--card2);color:var(--text);cursor:pointer;font-size:13px;font-weight:600;">🔗 Connect YouTube (Composio)</button>';
-      console.log('[composio] button rendered');
+    if (!el) return;
+
+    if (data.connected) {
+      el.innerHTML = '<span style="color:var(--green);font-weight:600;">✅ YouTube connected — uploads ready</span>';
+    } else if (data.needs_secret) {
+      el.innerHTML = '<span style="color:var(--accent);">⚠️ YouTube not connected — <a href="#" onclick="showYTSetup();return false;" style="color:var(--accent);text-decoration:underline;">click to setup</a></span>';
+    } else if (data.needs_auth) {
+      el.innerHTML = '<span style="color:var(--accent);">⚠️ YouTube needs authorization — <a href="#" onclick="authYouTube();return false;" style="color:var(--accent);text-decoration:underline;">click to authorize</a></span>';
     } else {
-      el.innerHTML = '<span style="color:var(--green);font-weight:600;">✅ YouTube connected via Composio</span>';
-      console.log('[composio] connected status rendered');
+      el.innerHTML = '<span style="color:var(--accent);">⚠️ YouTube not configured</span>';
     }
   } catch(e) {
-    console.error('[composio] error:', e);
+    console.error('[yt] error:', e);
     const el = document.getElementById('composio-status');
-    if (el) el.innerHTML = '<span style="color:var(--accent);">⚠️ Could not check Composio status</span>';
+    if (el) el.innerHTML = '<span style="color:var(--accent);">⚠️ YouTube not configured — <a href="#" onclick="showYTSetup();return false;" style="color:var(--accent);text-decoration:underline;">click to setup</a></span>';
   }
 }
-async function connectComposio() {
+function showYTSetup() {
+  alert('YouTube Upload Setup (One-time, 5 minutes):\\n\\n' +
+    '1. Go to https://console.cloud.google.com/\\n' +
+    '2. Create a project (or use existing)\\n' +
+    '3. Enable \"YouTube Data API v3\":\\n' +
+    '   https://console.cloud.google.com/apis/library/youtube.googleapis.com\\n' +
+    '4. Go to Credentials → Create Credentials → OAuth client ID\\n' +
+    '5. Application type: Desktop app\\n' +
+    '6. Download the JSON file\\n' +
+    '7. Upload it below (or save as client_secret.json)\\n\\n' +
+    'After uploading client_secret.json, click \"Authorize YouTube\" to login.');
+}
+async function authYouTube() {
   try {
-    const res = await fetch('api/composio/auth-url', {cache: 'no-store'});
+    const res = await fetch('api/yt/auth', {method:'POST'});
     const data = await res.json();
     if (data.error) { alert('Error: ' + data.error); return; }
-    window.open(data.auth_url, '_blank');
-    alert('After authorizing in the new tab, come back here. The page will refresh automatically.');
-    setTimeout(checkComposio, 5000);
+    if (data.auth_url) {
+      window.open(data.auth_url, '_blank');
+      alert('After authorizing in the new tab, the token will be saved automatically.');
+      setTimeout(checkComposio, 5000);
+    } else if (data.needs_secret) {
+      showYTSetup();
+    }
   } catch(e) { alert('Error: ' + e.message); }
 }
+async function connectComposio() { authYouTube(); }
 // Run immediately and also after DOM is fully ready
 document.addEventListener('DOMContentLoaded', checkComposio);
 checkComposio();
@@ -2122,9 +2140,13 @@ def api_upload_yt(job_id):
     def do_upload():
         try:
             import subprocess as sp
+            # Try direct YouTube API first (no third-party dependency)
+            yt_script = SCRIPTS / "youtube_direct.py"
+            if not yt_script.exists():
+                yt_script = SCRIPTS / "youtube.py"  # Fallback to Composio
             cmd = [
                 sys.executable,
-                str(SCRIPTS / "youtube.py"),
+                str(yt_script),
                 str(project_dir),
                 "--title", yt_title,
                 "--description", yt_description,
@@ -2133,16 +2155,33 @@ def api_upload_yt(job_id):
                 "--video", str(video_path),
             ]
             env = os.environ.copy()
-            # Ensure COMPOSIO_API_KEY is set
             env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-            result = sp.run(cmd, capture_output=True, text=True, timeout=300, env=env)
+            result = sp.run(cmd, capture_output=True, text=True, timeout=600, env=env)
             if result.returncode == 0:
                 # Parse video URL from output
                 video_url = ""
                 for line in result.stdout.split("\n"):
                     if "watch?v=" in line:
-                        video_url = line.strip().split("URL: ")[-1]
+                        # Extract URL from output line
+                        import re
+                        m = re.search(r'https://www\.youtube\.com/watch\?v=\S+', line)
+                        if m:
+                            video_url = m.group(0)
+                        else:
+                            video_url = line.strip().split("URL: ")[-1]
                         break
+                # Also check JSON output at the end
+                if not video_url:
+                    for line in reversed(result.stdout.split("\n")):
+                        line = line.strip()
+                        if line.startswith("{") and "video_url" in line:
+                            try:
+                                d = json.loads(line)
+                                video_url = d.get("video_url", "")
+                            except:
+                                pass
+                        if video_url:
+                            break
                 jobs[upload_status_key] = {
                     "status": "done",
                     "video_url": video_url,
@@ -2302,7 +2341,7 @@ def oauth_callback():
 
 @app.route("/api/composio/status")
 def api_composio_status():
-    """Check if Composio is authenticated."""
+    """Check if Composio is authenticated (legacy)."""
     load_composio_keys()
     token_file = Path("/opt/baal-agent/workspace/vox-director/.composio_token")
     has_token = token_file.exists() or "access_token" in composio_tokens
@@ -2310,6 +2349,78 @@ def api_composio_status():
         "has_consumer_key": bool(COMPOSIO_CONSUMER_KEY),
         "has_token": has_token,
         "needs_auth": not has_token,
+    })
+
+
+# ── Direct YouTube Data API v3 ───────────────────────────────────────────────
+
+YT_CLIENT_SECRET = VOX / "client_secret.json"
+YT_TOKEN_FILE = VOX / ".youtube_token.json"
+
+
+@app.route("/api/yt/status")
+def api_yt_status():
+    """Check YouTube Data API connection status."""
+    has_secret = YT_CLIENT_SECRET.exists()
+    has_token = YT_TOKEN_FILE.exists()
+    if has_token:
+        return jsonify({"connected": True})
+    elif has_secret:
+        return jsonify({"connected": False, "needs_auth": True})
+    else:
+        return jsonify({"connected": False, "needs_secret": True})
+
+
+@app.route("/api/yt/upload-secret", methods=["POST"])
+def api_yt_upload_secret():
+    """Save uploaded client_secret.json for YouTube API."""
+    data = request.json or {}
+    secret_content = data.get("content")
+    if not secret_content:
+        return jsonify({"error": "No content provided"}), 400
+    try:
+        # Validate it's valid JSON
+        json.loads(secret_content)
+        YT_CLIENT_SECRET.write_text(secret_content)
+        os.chmod(YT_CLIENT_SECRET, 0o600)
+        return jsonify({"ok": True, "message": "client_secret.json saved"})
+    except json.JSONDecodeError:
+        return jsonify({"error": "Invalid JSON"}), 400
+
+
+@app.route("/api/yt/auth", methods=["POST"])
+def api_yt_auth():
+    """Start YouTube OAuth flow. Since this is a headless server, we return
+    the auth URL for the user to open in their browser."""
+    if not YT_CLIENT_SECRET.exists():
+        return jsonify({"error": "client_secret.json not found", "needs_secret": True})
+
+    # Run the OAuth flow in a background thread
+    # The flow uses run_local_server which opens a browser — on a headless server
+    # we need to use the console flow instead
+    def run_auth():
+        try:
+            from google_auth_oauthlib.flow import InstalledAppFlow
+            SCOPES = [
+                "https://www.googleapis.com/auth/youtube.upload",
+                "https://www.googleapis.com/auth/youtube",
+            ]
+            flow = InstalledAppFlow.from_client_secrets_file(str(YT_CLIENT_SECRET), SCOPES)
+            # Use run_console for headless server (prints URL to stdout)
+            creds = flow.run_console(access_type="offline", prompt="consent")
+            token_data = json.loads(creds.to_json())
+            YT_TOKEN_FILE.write_text(json.dumps(token_data, indent=2))
+            os.chmod(YT_TOKEN_FILE, 0o600)
+            print(f"[yt-auth] ✅ YouTube token saved!")
+        except Exception as e:
+            print(f"[yt-auth] ❌ Auth failed: {e}")
+
+    thread = threading.Thread(target=run_auth, daemon=True)
+    thread.start()
+
+    return jsonify({
+        "message": "Auth flow started. Check the terminal output for the authorization URL.",
+        "note": "On a headless server, use: python3 scripts/youtube_direct.py --auth"
     })
 
 
