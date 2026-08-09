@@ -1220,9 +1220,22 @@ async function authYouTube() {
     const data = await res.json();
     if (data.error) { alert('Error: ' + data.error); return; }
     if (data.auth_url) {
+      // Show redirect URI instructions first
+      const msg = 'IMPORTANT: Before authorizing, make sure this redirect URI is added\\n' +
+        'to your Google Cloud Console under OAuth credentials:\\n\\n' +
+        data.redirect_uri + '\\n\\n' +
+        'If you already added it, click OK to open the authorization page.\\n' +
+        'After authorizing, you will be redirected back automatically.';
+      alert(msg);
       window.open(data.auth_url, '_blank');
-      alert('After authorizing in the new tab, the token will be saved automatically.');
-      setTimeout(checkComposio, 5000);
+      // Poll for connection status
+      const pollAuth = async () => {
+        await checkComposio();
+        const el = document.getElementById('composio-status');
+        if (el && el.innerHTML.includes('connected')) return;
+        setTimeout(pollAuth, 3000);
+      };
+      setTimeout(pollAuth, 5000);
     } else if (data.needs_secret) {
       showYTSetup();
     }
@@ -2390,38 +2403,69 @@ def api_yt_upload_secret():
 
 @app.route("/api/yt/auth", methods=["POST"])
 def api_yt_auth():
-    """Start YouTube OAuth flow. Since this is a headless server, we return
-    the auth URL for the user to open in their browser."""
+    """Start YouTube OAuth flow using the public URL as redirect.
+
+    Returns the Google authorization URL. The user opens it in their browser,
+    authorizes, and Google redirects to /api/yt/callback which captures the token.
+    """
     if not YT_CLIENT_SECRET.exists():
         return jsonify({"error": "client_secret.json not found", "needs_secret": True})
 
-    # Run the OAuth flow in a background thread
-    # The flow uses run_local_server which opens a browser — on a headless server
-    # we need to use the console flow instead
-    def run_auth():
-        try:
-            from google_auth_oauthlib.flow import InstalledAppFlow
-            SCOPES = [
-                "https://www.googleapis.com/auth/youtube.upload",
-                "https://www.googleapis.com/auth/youtube",
-            ]
-            flow = InstalledAppFlow.from_client_secrets_file(str(YT_CLIENT_SECRET), SCOPES)
-            # Use run_console for headless server (prints URL to stdout)
-            creds = flow.run_console(access_type="offline", prompt="consent")
-            token_data = json.loads(creds.to_json())
-            YT_TOKEN_FILE.write_text(json.dumps(token_data, indent=2))
-            os.chmod(YT_TOKEN_FILE, 0o600)
-            print(f"[yt-auth] ✅ YouTube token saved!")
-        except Exception as e:
-            print(f"[yt-auth] ❌ Auth failed: {e}")
+    from google_auth_oauthlib.flow import InstalledAppFlow
 
-    thread = threading.Thread(target=run_auth, daemon=True)
-    thread.start()
+    YT_SCOPES = [
+        "https://www.googleapis.com/auth/youtube.upload",
+        "https://www.googleapis.com/auth/youtube",
+    ]
+
+    redirect_uri = "https://chimney-copper-marriage-salute.2n6.me/vox/api/yt/callback"
+    flow = InstalledAppFlow.from_client_secrets_file(
+        str(YT_CLIENT_SECRET), YT_SCOPES, redirect_uri=redirect_uri
+    )
+    auth_url, state = flow.authorization_url(access_type="offline", prompt="consent")
+
+    # Store the flow object globally so the callback can use it
+    app.yt_oauth_flow = flow
 
     return jsonify({
-        "message": "Auth flow started. Check the terminal output for the authorization URL.",
-        "note": "On a headless server, use: python3 scripts/youtube_direct.py --auth"
+        "auth_url": auth_url,
+        "redirect_uri": redirect_uri,
+        "note": "Add this redirect URI to your Google Cloud Console if you haven't already."
     })
+
+
+@app.route("/api/yt/callback")
+def api_yt_callback():
+    """OAuth callback — Google redirects here with the authorization code."""
+    from google_auth_oauthlib.flow import InstalledAppFlow
+
+    code = request.args.get("code")
+    error = request.args.get("error")
+
+    if error:
+        return f"<h1>Authorization failed</h1><p>Google returned error: {error}</p>"
+
+    if not code:
+        return "<h1>Authorization failed</h1><p>No authorization code received.</p>", 400
+
+    flow = getattr(app, "yt_oauth_flow", None)
+    if not flow:
+        return "<h1>Authorization failed</h1><p>OAuth flow not found. Please try again from the studio.</p>", 400
+
+    try:
+        flow.fetch_token(code=code)
+        creds = flow.credentials
+        token_data = json.loads(creds.to_json())
+        YT_TOKEN_FILE.write_text(json.dumps(token_data, indent=2))
+        os.chmod(YT_TOKEN_FILE, 0o600)
+
+        return """<html><body style="font-family:sans-serif;text-align:center;padding:50px;background:#1a1a2e;color:#eee;">
+        <h1 style="color:#4ade80;">✅ YouTube Connected!</h1>
+        <p>Your YouTube account is now linked. You can close this tab.</p>
+        <p>Go back to <a href="/vox/" style="color:#818cf8;">Vox Director Studio</a> to upload videos.</p>
+        </body></html>"""
+    except Exception as e:
+        return f"<h1>Authorization failed</h1><p>Error exchanging code: {e}</p>", 500
 
 
 def get_composio_jwt():
