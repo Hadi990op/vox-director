@@ -34,3 +34,8 @@ PROMO_SUBMISSIONS.md
 references/*
 !references/*.md
 references/PIPELINE_PLAYBOOK.md
+
+# Google OAuth secrets
+client_secret.json
+.youtube_token.json
+client_secret*.json
