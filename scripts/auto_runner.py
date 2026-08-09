@@ -98,7 +98,7 @@ def step3_generate_script(idea):
 
     payload = json.dumps({
         "topic": topic,
-        "duration": 45,
+        "duration": 600,  # 10 minutes — YouTube pushes long-form
         "aspect": "16:9",
         "theme": "newsprint-editorial",
         "arc": "hook_payoff",
@@ -323,7 +323,7 @@ def run_autonomous(topic=None, dry_run=False, skip_research=False):
     log("")
 
     # Step 5: Wait for video
-    job = step5_wait_for_video(job_id, timeout=1200)
+    job = step5_wait_for_video(job_id, timeout=7200)  # 2 hours for 10-min video
     if not job or job.get("status") != "done":
         save_autonomous_log(idea, job_id, None, "video_failed")
         log("❌ Video generation failed!", "ERROR")

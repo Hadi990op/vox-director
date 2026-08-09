@@ -234,6 +234,27 @@ def manage_pipeline(project_dir, max_step_retries=3, progress_callback=None):
         final_video = str(final_video_path)
         size_mb = final_video_path.stat().st_size / 1024 / 1024
         log(f"🎉 Pipeline complete! final.mp4 ({size_mb:.1f} MB)")
+
+        # ─── Generate thumbnail ───
+        try:
+            log("🎨 Generating thumbnail...")
+            thumb_script = BASE_DIR / "scripts" / "thumbnail_builder.py"
+            if thumb_script.exists():
+                import subprocess as sp
+                env = os.environ.copy()
+                env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                result_thumb = sp.run(
+                    [sys.executable, str(thumb_script), str(project_dir), "--variation", "1"],
+                    capture_output=True, text=True, timeout=60, env=env
+                )
+                thumb_path = project_dir / "thumbnail_v1.jpg"
+                if thumb_path.exists():
+                    log(f"   ✅ Thumbnail: {thumb_path}")
+                else:
+                    log(f"   ⚠️ Thumbnail generation may have failed: {result_thumb.stderr[-200:]}")
+        except Exception as e:
+            log(f"   ⚠️ Thumbnail generation error: {e}")
+
         return {
             "success": True,
             "final_video": final_video,

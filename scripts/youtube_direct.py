@@ -129,7 +129,25 @@ def do_auth_flow():
     print("  You can now upload videos automatically!")
 
 
-def upload_video(video_path, title, description, tags, privacy="public"):
+def set_thumbnail(youtube, video_id, thumbnail_path):
+    """Set a custom thumbnail for an uploaded video.
+
+    Requires the OAuth token to have the youtube scope (not just youtube.upload).
+    """
+    from googleapiclient.http import MediaFileUpload
+    try:
+        youtube.thumbnails().set(
+            videoId=video_id,
+            media_body=MediaFileUpload(str(thumbnail_path), mimetype="image/jpeg")
+        ).execute()
+        print(f"  ✅ Thumbnail set!")
+        return True
+    except Exception as e:
+        print(f"  ⚠️ Could not set thumbnail: {e}")
+        return False
+
+
+def upload_video(video_path, title, description, tags, privacy="public", thumbnail_path=None):
     """Upload video to YouTube."""
     from googleapiclient.http import MediaFileUpload
 
@@ -178,6 +196,11 @@ def upload_video(video_path, title, description, tags, privacy="public"):
                     video_id = response["id"]
                     video_url = f"https://www.youtube.com/watch?v={video_id}"
                     print(f"  ✅ Upload complete! Video ID: {video_id}")
+
+                    # Set custom thumbnail if provided
+                    if thumbnail_path and Path(thumbnail_path).exists():
+                        set_thumbnail(youtube, video_id, thumbnail_path)
+
                     return {
                         "video_id": video_id,
                         "video_url": video_url,
@@ -296,7 +319,20 @@ def main():
     print(f"  Title: {title}")
     print()
 
-    result = upload_video(video_path, title, description, tags, args.privacy)
+    # Auto-generate thumbnail if not provided
+    thumbnail_path = project_dir / "thumbnail.jpg"
+    if not thumbnail_path.exists():
+        # Try thumbnail_v1.jpg as fallback
+        thumb_v1 = project_dir / "thumbnail_v1.jpg"
+        if thumb_v1.exists():
+            thumbnail_path = thumb_v1
+        else:
+            thumbnail_path = None
+            print("  ⚠️ No thumbnail found, uploading without custom thumbnail")
+    else:
+        print(f"  Thumbnail: {thumbnail_path}")
+
+    result = upload_video(video_path, title, description, tags, args.privacy, thumbnail_path=thumbnail_path)
     print()
     print(json.dumps(result, indent=2))
     if "error" in result:

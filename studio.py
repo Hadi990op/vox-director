@@ -1033,10 +1033,12 @@ function renderJob(j) {
   if (j.status === 'done' && j.result_video) {
     video = `<div class="video-result">
       <video controls preload="metadata" src="api/video/${j.id}" style="width:100%;border-radius:8px;"></video>
-      <div style="margin-top:8px;display:flex;gap:8px;">
+      <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
         <a href="api/video/${j.id}" download style="display:inline-block;padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:var(--card2);color:var(--text);text-decoration:none;">⬇️ Download</a>
         <button onclick="uploadToYT('${j.id}')" style="display:inline-block;width:auto;padding:8px 16px;">📤 Upload to YouTube</button>
+        <button onclick="generateThumbnail('${j.id}')" style="display:inline-block;width:auto;padding:8px 16px;">🎨 Generate Thumbnail</button>
       </div>
+      <div id="thumb-area-${j.id}" style="margin-top:10px;"></div>
     </div>`;
   }
 
@@ -1173,6 +1175,69 @@ async function uploadToYT(id) {
     btn.textContent = '📤 Upload to YouTube';
     alert('Error: ' + e.message);
   }
+}
+
+async function generateThumbnail(id) {
+  const area = document.getElementById('thumb-area-' + id);
+  if (!area) return;
+  area.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">🎨 Generating thumbnail (AI overlay text)...</div>';
+  try {
+    const meta = ytMetadata[id] || {};
+    const body = { variation: 1 };
+    if (meta.title) body.title = meta.title;
+    const res = await fetch('api/thumbnail/' + id, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (data.ok) {
+      area.innerHTML = renderThumbPreview(id, data.thumbnail, 1);
+    } else {
+      area.innerHTML = '<div style="color:var(--accent);font-size:13px;">❌ ' + (data.error||'Failed') + '</div>';
+    }
+  } catch(e) {
+    area.innerHTML = '<div style="color:var(--accent);font-size:13px;">❌ Error: ' + e.message + '</div>';
+  }
+}
+
+async function generateThumbnailVariation(id, variation) {
+  const area = document.getElementById('thumb-area-' + id);
+  if (!area) return;
+  area.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">🎨 Generating layout ' + variation + '...</div>';
+  try {
+    const meta = ytMetadata[id] || {};
+    const body = { variation: variation };
+    if (meta.title) body.title = meta.title;
+    const res = await fetch('api/thumbnail/' + id, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (data.ok) {
+      area.innerHTML = renderThumbPreview(id, data.thumbnail, variation);
+    } else {
+      area.innerHTML = '<div style="color:var(--accent);font-size:13px;">❌ ' + (data.error||'Failed') + '</div>';
+    }
+  } catch(e) {
+    area.innerHTML = '<div style="color:var(--accent);font-size:13px;">❌ Error: ' + e.message + '</div>';
+  }
+}
+
+function renderThumbPreview(id, thumbUrl, variation) {
+  return `
+    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;">
+      <img src="${thumbUrl}?t=${Date.now()}" style="width:320px;border-radius:8px;border:1px solid var(--border);" alt="Thumbnail">
+      <div style="flex:1;min-width:200px;">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button onclick="generateThumbnailVariation('${id}',1)" style="padding:6px 12px;font-size:12px;background:${variation==1?'var(--accent)':'var(--card2)'};border:1px solid var(--border);border-radius:6px;color:${variation==1?'#fff':'var(--text)'};">Layout 1</button>
+          <button onclick="generateThumbnailVariation('${id}',2)" style="padding:6px 12px;font-size:12px;background:${variation==2?'var(--accent)':'var(--card2)'};border:1px solid var(--border);border-radius:6px;color:${variation==2?'#fff':'var(--text)'};">Layout 2</button>
+          <button onclick="generateThumbnailVariation('${id}',3)" style="padding:6px 12px;font-size:12px;background:${variation==3?'var(--accent)':'var(--card2)'};border:1px solid var(--border);border-radius:6px;color:${variation==3?'#fff':'var(--text)'};">Layout 3</button>
+        </div>
+        <div style="margin-top:8px;font-size:12px;color:var(--muted);">Layout ${variation} — Image ${variation==1?'right':variation==2?'center+banner':'left'}, text ${variation==1?'left':variation==2?'on banner':'right'}</div>
+      </div>
+    </div>`;
 }
 
 pollJobs();
@@ -2211,6 +2276,61 @@ def api_upload_yt(job_id):
     threading.Thread(target=do_upload, daemon=True).start()
 
     return jsonify({"ok": True, "message": "Upload started", "status_key": upload_status_key})
+
+
+@app.route("/api/thumbnail/<job_id>", methods=["POST"])
+def api_generate_thumbnail(job_id):
+    """Generate or regenerate a YouTube thumbnail for a video project."""
+    if job_id not in jobs:
+        return jsonify({"error": "Job not found"}), 404
+
+    project_dir = Path(jobs[job_id].get("project_dir", ""))
+    if not project_dir.exists():
+        return jsonify({"error": "Project directory not found"}), 404
+
+    data = request.json or {}
+    variation = data.get("variation", 1)
+    title = data.get("title", "")
+
+    thumb_script = SCRIPTS / "thumbnail_builder.py"
+    if not thumb_script.exists():
+        return jsonify({"error": "thumbnail_builder.py not found"}), 500
+
+    cmd = [
+        sys.executable, str(thumb_script), str(project_dir),
+        "--variation", str(variation),
+    ]
+    if title:
+        cmd += ["--title", title]
+
+    env = os.environ.copy()
+    env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=90, env=env)
+
+    if result.returncode == 0:
+        thumb_path = project_dir / f"thumbnail_v{variation}.jpg"
+        if thumb_path.exists():
+            return jsonify({
+                "ok": True,
+                "thumbnail": f"/vox/api/thumb/{job_id}/{variation}",
+                "output": result.stdout[-300:]
+            })
+    return jsonify({"error": result.stderr[-300:] or result.stdout[-300:]}), 500
+
+
+@app.route("/api/thumb/<job_id>/<variation>")
+def api_serve_thumbnail(job_id, variation):
+    """Serve a generated thumbnail image."""
+    if job_id not in jobs:
+        return "Not found", 404
+    project_dir = Path(jobs[job_id].get("project_dir", ""))
+    thumb_path = project_dir / f"thumbnail_v{variation}.jpg"
+    if not thumb_path.exists():
+        # Also check without _v suffix (default)
+        thumb_path = project_dir / "thumbnail.jpg"
+    if not thumb_path.exists():
+        return "Thumbnail not found", 404
+    return send_file(str(thumb_path), mimetype="image/jpeg")
 
 
 @app.route("/api/upload-status/<job_id>")
