@@ -39,3 +39,6 @@ references/PIPELINE_PLAYBOOK.md
 client_secret.json
 .youtube_token.json
 client_secret*.json
+
+# Composio keys
+.composio_*
