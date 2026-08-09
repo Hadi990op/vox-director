@@ -68,9 +68,12 @@ def get_authenticated_service():
 
 
 def do_auth_flow():
-    """Run the OAuth flow to get initial credentials."""
-    from google_auth_oauthlib.flow import InstalledAppFlow
+    """Run the OAuth flow to get initial credentials.
 
+    Works with both 'web' and 'installed' (Desktop app) credential types.
+    For web type: uses manual copy-paste flow (headless server has no browser).
+    For installed type: uses run_local_server (opens browser).
+    """
     if not CLIENT_SECRET_FILE.exists():
         print("ERROR: client_secret.json not found!")
         print()
@@ -80,18 +83,42 @@ def do_auth_flow():
         print("  3. Enable 'YouTube Data API v3':")
         print("     https://console.cloud.google.com/apis/library/youtube.googleapis.com")
         print("  4. Go to 'Credentials' → 'Create Credentials' → 'OAuth client ID'")
-        print("  5. Application type: 'Desktop app'")
-        print("  6. Download the JSON file")
-        print(f"  7. Save it to: {CLIENT_SECRET_FILE}")
+        print("  5. Application type: 'Web application'")
+        print("  6. Add redirect URI: https://chimney-copper-marriage-salute.2n6.me/vox/api/yt/callback")
+        print("  7. Download the JSON file")
+        print(f"  8. Save it to: {CLIENT_SECRET_FILE}")
+        print()
+        print("  Then authorize via the Studio UI:")
+        print("  https://chimney-copper-marriage-salute.2n6.me/vox/")
+        print("  → Click 'Authorize YouTube' button")
         sys.exit(1)
 
-    print("Starting YouTube OAuth flow...")
-    print("  A browser window will open for authorization.")
-    print()
+    # Read the client config to determine type
+    import json as _json
+    client_config = _json.loads(CLIENT_SECRET_FILE.read_text())
 
-    flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRET_FILE), SCOPES)
-    # Use local server flow (opens browser automatically)
-    creds = flow.run_local_server(port=0, access_type="offline", prompt="consent")
+    if "web" in client_config:
+        # Web app type — use manual flow (headless server)
+        print("=" * 60)
+        print("  YouTube OAuth Authorization (Web App)")
+        print("=" * 60)
+        print()
+        print("  This is a Web application credential type.")
+        print("  Please authorize via the Studio UI instead:")
+        print()
+        print("  https://chimney-copper-marriage-salute.2n6.me/vox/")
+        print("  → Click 'Authorize YouTube' button")
+        print()
+        print("  The Studio will handle the OAuth flow with the public redirect URI.")
+        sys.exit(0)
+    else:
+        # Desktop app type — use local server (opens browser)
+        from google_auth_oauthlib.flow import InstalledAppFlow
+        print("Starting YouTube OAuth flow (Desktop app)...")
+        print("  A browser window will open for authorization.")
+        print()
+        flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRET_FILE), SCOPES)
+        creds = flow.run_local_server(port=0, access_type="offline", prompt="consent")
 
     # Save token
     token_data = json.loads(creds.to_json())

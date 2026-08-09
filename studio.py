@@ -2407,11 +2407,13 @@ def api_yt_auth():
 
     Returns the Google authorization URL. The user opens it in their browser,
     authorizes, and Google redirects to /api/yt/callback which captures the token.
+
+    Works with both 'web' and 'installed' (Desktop app) credential types.
     """
     if not YT_CLIENT_SECRET.exists():
         return jsonify({"error": "client_secret.json not found", "needs_secret": True})
 
-    from google_auth_oauthlib.flow import InstalledAppFlow
+    from google_auth_oauthlib.flow import Flow
 
     YT_SCOPES = [
         "https://www.googleapis.com/auth/youtube.upload",
@@ -2419,13 +2421,20 @@ def api_yt_auth():
     ]
 
     redirect_uri = "https://chimney-copper-marriage-salute.2n6.me/vox/api/yt/callback"
-    flow = InstalledAppFlow.from_client_secrets_file(
-        str(YT_CLIENT_SECRET), YT_SCOPES, redirect_uri=redirect_uri
+
+    # Read client config to determine type (web vs installed)
+    client_config = json.loads(YT_CLIENT_SECRET.read_text())
+    # Flow.from_client_config requires the redirect_uri to match the configured URIs
+    flow = Flow.from_client_config(
+        client_config,
+        scopes=YT_SCOPES,
+        redirect_uri=redirect_uri,
     )
     auth_url, state = flow.authorization_url(access_type="offline", prompt="consent")
 
     # Store the flow object globally so the callback can use it
     app.yt_oauth_flow = flow
+    app.yt_oauth_state = state
 
     return jsonify({
         "auth_url": auth_url,
@@ -2437,13 +2446,13 @@ def api_yt_auth():
 @app.route("/api/yt/callback")
 def api_yt_callback():
     """OAuth callback — Google redirects here with the authorization code."""
-    from google_auth_oauthlib.flow import InstalledAppFlow
+    from google_auth_oauthlib.flow import Flow
 
     code = request.args.get("code")
     error = request.args.get("error")
 
     if error:
-        return f"<h1>Authorization failed</h1><p>Google returned error: {error}</p>"
+        return f"<html><body style='font-family:sans-serif;text-align:center;padding:50px;background:#1a1a2e;color:#eee;'><h1 style='color:#ef4444;'>❌ Authorization Failed</h1><p>Google returned error: {error}</p></body></html>"
 
     if not code:
         return "<h1>Authorization failed</h1><p>No authorization code received.</p>", 400
@@ -2453,6 +2462,7 @@ def api_yt_callback():
         return "<h1>Authorization failed</h1><p>OAuth flow not found. Please try again from the studio.</p>", 400
 
     try:
+        # For web app type, the client_secret is passed automatically by Flow
         flow.fetch_token(code=code)
         creds = flow.credentials
         token_data = json.loads(creds.to_json())
