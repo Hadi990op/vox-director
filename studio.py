@@ -1348,6 +1348,42 @@ async function autoInit() {
   await loadHistory();
   await loadAutoRuns();
 }
+async function loadAutoRuns() {
+  try {
+    const res = await fetch('api/auto/runs', {cache:'no-store'});
+    const data = await res.json();
+    // Show active runs count
+    const active = data.filter(r => r.status === 'running');
+    if (active.length) {
+      document.getElementById('auto-active-count').textContent = active.length + ' running';
+      // Resume polling for any running runs (page was refreshed)
+      const section = document.getElementById('auto-run-section');
+      if (section) section.style.display = 'block';
+      active.forEach(r => {
+        // Only start polling if not already polling this run
+        if (!window._pollingRuns) window._pollingRuns = new Set();
+        if (!window._pollingRuns.has(r.id)) {
+          window._pollingRuns.add(r.id);
+          pollAutoStatus(r.id, null, 'auto-run-progress');
+        }
+      });
+    }
+    // Also show recently completed runs (last 5)
+    const recent = data.filter(r => r.status !== 'running').slice(-5).reverse();
+    if (recent.length) {
+      const el = document.getElementById('auto-history');
+      if (el) {
+        recent.forEach(e => {
+          if (e.video_url) {
+            el.innerHTML = `<div style="display:flex;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">
+              <div style="flex:1"><a href="${e.video_url}" target="_blank" style="color:var(--text);text-decoration:none">${(e.step||e.type||'run')}</a>
+              <br><span style="color:var(--dim);font-size:12px">${e.status} · just now</span></div></div>` + el.innerHTML;
+          }
+        });
+      }
+    }
+  } catch(e) {}
+}
 async function loadCompetitors() {
   try {
     const res = await fetch('api/auto/competitors', {cache:'no-store'});
@@ -1497,15 +1533,6 @@ async function loadHistory() {
           <br><span style="color:var(--dim);font-size:12px">${e.status} · ${new Date(e.timestamp).toLocaleString()}</span>
         </div>
       </div>`).join('');
-  } catch(e) {}
-}
-async function loadAutoRuns() {
-  try {
-    const res = await fetch('api/auto/runs', {cache:'no-store'});
-    const data = await res.json();
-    // Just show active runs count
-    const active = data.filter(r => r.status === 'running');
-    if (active.length) { document.getElementById('auto-active-count').textContent = active.length + ' running'; }
   } catch(e) {}
 }
 document.addEventListener('DOMContentLoaded', autoInit);
@@ -2729,6 +2756,52 @@ autonomous_counter = 0
 auto_lock = threading.Lock()
 
 AUTO_LOG = VOX / "out" / "autonomous_log.jsonl"
+AUTO_RUNS_DB = VOX / "out" / "auto_runs.json"  # persist runs to survive page refresh
+
+
+def save_auto_runs():
+    """Persist autonomous runs to disk (called inside auto_lock)."""
+    try:
+        with auto_lock:
+            serializable = {}
+            for rid, r in autonomous_runs.items():
+                serializable[rid] = {k: v for k, v in r.items()}
+            with open(AUTO_RUNS_DB, "w") as f:
+                json.dump(serializable, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"[auto-runs] save error: {e}")
+
+
+def load_auto_runs():
+    """Load autonomous runs from disk on startup."""
+    global autonomous_runs, autonomous_counter
+    if not AUTO_RUNS_DB.exists():
+        return
+    try:
+        with open(AUTO_RUNS_DB) as f:
+            data = json.load(f)
+        max_num = 0
+        for rid, r in data.items():
+            # If a run was still "running" when server died, mark as interrupted
+            if r.get("status") == "running":
+                r["status"] = "interrupted"
+                r["error"] = "Server restarted during run"
+            autonomous_runs[rid] = r
+            # Extract number from run_id (auto_0, batch_1, research_2, etc.)
+            try:
+                num = int(rid.split("_")[-1])
+                if num > max_num:
+                    max_num = num
+            except (ValueError, IndexError):
+                pass
+        autonomous_counter = max_num + 1
+        print(f"[auto-runs] Loaded {len(autonomous_runs)} runs from disk")
+    except Exception as e:
+        print(f"[auto-runs] load error: {e}")
+
+
+# Load existing runs on startup
+load_auto_runs()
 
 
 @app.route("/api/auto/research", methods=["POST"])
@@ -2849,6 +2922,7 @@ def api_auto_run():
             run["log"].append(f"[{ts}] {msg}")
             if len(run["log"]) > 200:
                 run["log"] = run["log"][-150:]
+            save_auto_runs()  # persist log updates so refresh survives
 
         try:
             sys.path.insert(0, str(SCRIPTS))
@@ -3088,6 +3162,7 @@ def api_auto_run():
             "video_url": None,
             "created_at": time.time(),
         }
+    save_auto_runs()
 
     thread = threading.Thread(target=run_full_pipeline, args=(run_id, topic_override, skip_research), daemon=True)
     thread.start()
@@ -3100,6 +3175,7 @@ def api_auto_status(run_id):
     run = autonomous_runs.get(run_id)
     if not run:
         return jsonify({"error": "Run not found"}), 404
+    save_auto_runs()  # persist on every status check so refresh survives
     return jsonify(run)
 
 
@@ -3187,6 +3263,7 @@ def api_auto_weekly_batch():
             "count": count,
             "created_at": time.time(),
         }
+    save_auto_runs()
 
     def run_batch(run_id, count, skip_research):
         run = autonomous_runs[run_id]
@@ -3196,6 +3273,7 @@ def api_auto_weekly_batch():
             run["log"].append(f"[{ts}] {msg}")
             if len(run["log"]) > 300:
                 run["log"] = run["log"][-200:]
+            save_auto_runs()  # persist log updates so refresh survives
 
         try:
             sys.path.insert(0, str(SCRIPTS))
