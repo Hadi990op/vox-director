@@ -68,7 +68,10 @@ def run(project_dir):
                                                              **image_params(img_model, aspect, img_res)))
             by_key[key] = shot
 
-    done = run_jobs(prov, specs, poll_s=3, stall_s=75, max_retries=2, deadline_s=300)
+    # Scale deadline by shot count — long videos (80+ beats = 160+ shots) need much more time
+    n_specs = len(specs)
+    deadline = 300 if n_specs <= 20 else 600 if n_specs <= 40 else 1200 if n_specs <= 80 else 2400
+    done = run_jobs(prov, specs, poll_s=3, stall_s=75, max_retries=3, deadline_s=deadline)
 
     # Whether to apply collage post-processing (default: True for free provider)
     use_collage_post = doc.get("provider", "free") == "free"
@@ -84,6 +87,16 @@ def run(project_dir):
         shot["keyframe_url"] = url
         shot["keyframe_path"] = dest
 
+        # Crop to target aspect ratio (Agnes AI returns 1024x1024 squares)
+        if "agnes-ai" in url or "platform-outputs.agnes" in url:
+            try:
+                from PIL import Image
+                from free_provider import ASPECT_DIMS, _crop_to_aspect
+                tw, th = ASPECT_DIMS.get(aspect, ASPECT_DIMS["16:9"])
+                _crop_to_aspect(dest, dest, tw, th)
+            except Exception as e:
+                print(f"[{key}] aspect crop skipped: {e}")
+
         # Apply collage post-processing for Vox-style look (free provider)
         if use_collage_post:
             beat = shot if "title_en" in shot else next(
@@ -94,8 +107,19 @@ def run(project_dir):
                 beat = shot
             bg = beat.get("bg", "warm ochre") if isinstance(beat, dict) else "warm ochre"
             headline = beat.get("title_en", "") if shot.get("title", True) else ""
+            # Stick-figure style: lighter post-processing — keep clean flat look,
+            # skip heavy halftone/torn edges that would muddy the simple line art.
+            theme_name = doc.get("theme", "")
+            is_stick = theme_name == "stick-figure" or (
+                isinstance(theme, dict) and theme.get("idiom") == "stick-figure")
             try:
-                collage_post.apply_collage_effect(dest, dest, bg_color=bg, headline=headline)
+                if is_stick:
+                    collage_post.apply_collage_effect(dest, dest, bg_color=bg, headline=headline,
+                                                     halftone=False, torn_edges=False,
+                                                     newspaper_border=False, tape=True,
+                                                     color_grade=True, paper_texture=False)
+                else:
+                    collage_post.apply_collage_effect(dest, dest, bg_color=bg, headline=headline)
                 print(f"[{key}] saved {dest} (collage post-processed)")
             except Exception as e:
                 print(f"[{key}] saved {dest} (collage post FAILED: {e})")

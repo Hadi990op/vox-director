@@ -154,7 +154,20 @@ def _watcher_loop(job_id, project_dir, step_name, base_pct, span_pct, stop_event
     project_dir = Path(project_dir)
     start_time = _time.time()
     # Estimated durations (seconds) per step for time-based fallback
-    est_durations = {"keyframes": 180, "clips": 240, "audio": 30, "assemble": 45}
+    # Scale by shot count: long videos (120 beats × 2 = 240 shots) need much more time
+    try:
+        with open(project_dir / "beats.json") as f:
+            _doc = json.load(f)
+        _n_shots = sum(len(b.get("shots") or [b]) for b in _doc.get("beats", []))
+    except Exception:
+        _n_shots = 20
+    _scale = max(1.0, _n_shots / 20)
+    est_durations = {
+        "keyframes": int(180 * _scale),
+        "clips": int(240 * _scale),
+        "audio": int(30 * _scale),
+        "assemble": int(45 * _scale),
+    }
 
     def update(pct):
         with job_lock:
@@ -542,11 +555,13 @@ a { color:var(--accent); text-decoration:none; }
           <option value="120">120s (2 min)</option>
           <option value="180">180s (3 min)</option>
           <option value="300">300s (5 min)</option>
+          <option value="600">600s (10 min) ⭐</option>
+          <option value="900">900s (15 min) ⭐</option>
           <option value="custom">Custom...</option>
         </select>
-        <input type="number" id="duration-custom" min="5" max="600" value="45" 
+        <input type="number" id="duration-custom" min="5" max="1200" value="45" 
                style="display:none;margin-top:6px;width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--card2);color:var(--text);" 
-               placeholder="Enter seconds (5-600)" />
+               placeholder="Enter seconds (5-1200)" />
         <div class="hint" id="duration-hint" style="display:none;">Enter duration in seconds (5 to 600).</div>
       </div>
       <div>
@@ -652,12 +667,13 @@ a { color:var(--accent); text-decoration:none; }
   <div class="card" style="border-color:var(--accent);">
     <h2>🤖 Autonomous Mode <span style="font-size:12px;color:var(--dim);font-weight:400" id="auto-active-count"></span></h2>
     <p style="color:var(--dim);font-size:13px;margin-bottom:16px">
-      Automatically researches viral history videos from faceless channels, generates unique ideas, creates videos, and uploads to YouTube.
+      Automatically researches viral history videos from faceless channels, generates unique ideas, creates <b>10-15 min long-form videos</b>, and uploads to YouTube. <b>4 videos per week</b>, fully autonomous.
     </p>
 
     <!-- Quick Actions -->
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px">
-      <button onclick="runFullAuto()" style="padding:12px 20px;border-radius:10px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-weight:700;font-size:14px">🚀 Full Auto Run</button>
+      <button onclick="runWeeklyBatch()" style="padding:12px 20px;border-radius:10px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-weight:700;font-size:14px">🚀 Weekly Batch (4 Videos)</button>
+      <button onclick="runFullAuto()" style="padding:12px 20px;border-radius:10px;border:1px solid var(--border);background:var(--card2);color:var(--text);cursor:pointer;font-weight:600;font-size:14px">⚡ Single Auto Run</button>
       <button onclick="runResearch()" style="padding:12px 20px;border-radius:10px;border:1px solid var(--border);background:var(--card2);color:var(--text);cursor:pointer;font-weight:600;font-size:14px">🔍 Research Now</button>
     </div>
 
@@ -684,15 +700,17 @@ a { color:var(--accent); text-decoration:none; }
 
     <!-- Schedule -->
     <div style="border-top:1px solid var(--border);padding-top:16px;margin-bottom:16px">
-      <h3 style="font-size:14px;margin-bottom:10px">⏰ Daily Schedule</h3>
+      <h3 style="font-size:14px;margin-bottom:10px">⏰ Weekly Schedule</h3>
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
           <input type="checkbox" id="schedule-enabled" onchange="toggleSchedule()" style="width:auto;margin:0" />
-          <span style="font-size:13px">Enable daily auto-run</span>
+          <span style="font-size:13px">Enable weekly auto-batch (4 videos every Monday 6:00 UTC)</span>
         </label>
         <span id="schedule-status" style="font-size:13px;color:var(--dim)">🔴 Disabled</span>
       </div>
-      <p style="font-size:12px;color:var(--dim);margin-top:8px">Runs at 18:00 UTC (2pm EST / 11am PST) — USA peak viewing time</p>
+      <p style="font-size:12px;color:var(--dim);margin-top:8px">
+        Generates 4 long-form (10-min) videos from competitor research, then uploads each to YouTube. Pipeline manager handles failures with automatic retry.
+      </p>
     </div>
 
     <!-- History -->
@@ -730,8 +748,8 @@ async function generateScript() {
   const durVal = document.getElementById('duration').value;
   if (durVal === 'custom') {
     duration = parseInt(document.getElementById('duration-custom').value);
-    if (!duration || duration < 5 || duration > 600) {
-      alert('Please enter a valid duration between 5 and 600 seconds!');
+    if (!duration || duration < 5 || duration > 1200) {
+      alert('Please enter a valid duration between 5 and 1200 seconds!');
       return;
     }
   } else {
@@ -1280,8 +1298,21 @@ async function runFullAuto() {
     const data = await res.json();
     document.getElementById('auto-run-section').style.display = 'block';
     pollAutoStatus(data.run_id, null, 'auto-run-progress');
-    btn.disabled=false; btn.textContent='🚀 Full Auto Run';
-  } catch(e) { alert('Error: '+e.message); btn.disabled=false; btn.textContent='🚀 Full Auto Run'; }
+    btn.disabled=false; btn.textContent='⚡ Single Auto Run';
+  } catch(e) { alert('Error: '+e.message); btn.disabled=false; btn.textContent='⚡ Single Auto Run'; }
+}
+
+async function runWeeklyBatch() {
+  if (!confirm('Start WEEKLY BATCH?\\n\\nThis will generate 4 long-form (10-min) videos:\\n  1. Research competitor viral videos\\n  2. Generate 4 unique ideas\\n  3. Create scripts (80 beats each)\\n  4. Run pipeline manager for each video (with retry)\\n  5. Upload each to YouTube\\n\\nThis takes 2-4 HOURS. The page can stay open to monitor progress.')) return;
+  const btn = event.target;
+  btn.disabled = true; btn.textContent = '⏳ Batch Running...';
+  try {
+    const res = await fetch('api/auto/weekly-batch', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({count:4,skip_research:false})});
+    const data = await res.json();
+    document.getElementById('auto-run-section').style.display = 'block';
+    pollAutoStatus(data.run_id, null, 'auto-run-progress');
+    btn.disabled=false; btn.textContent='🚀 Weekly Batch (4 Videos)';
+  } catch(e) { alert('Error: '+e.message); btn.disabled=false; btn.textContent='🚀 Weekly Batch (4 Videos)'; }
 }
 function pollAutoStatus(runId, callback, progressEl) {
   const interval = setInterval(async () => {
@@ -1313,10 +1344,9 @@ async function loadSchedule() {
     const res = await fetch('api/auto/schedule', {cache:'no-store'});
     if (!res.ok) return;
     const data = await res.json();
-    const job = data.find(j => j.id === 'vox-tube-daily');
+    const job = data.find(j => j.id === 'vox-weekly-batch');
     if (job) {
       document.getElementById('schedule-enabled').checked = job.enabled;
-      document.getElementById('schedule-time').value = job.schedule;
       document.getElementById('schedule-status').textContent = job.enabled ? '🟢 Active' : '🔴 Disabled';
     }
   } catch(e) {}
@@ -1449,8 +1479,16 @@ def api_generate_script():
     voice = data.get("voice", "leo")
     extra_prompt = data.get("prompt", "")
 
+    # Long-form video support: ~6-8s per beat
+    # 30s=6 beats, 60s=10, 120s=18, 180s=24, 300s=40, 600s(10min)=80, 900s(15min)=120
     beat_count = (3 if duration <= 15 else 6 if duration <= 30 else 10 if duration <= 60
-                  else 14 if duration <= 90 else 18 if duration <= 120 else 24 if duration <= 180 else 36)
+                  else 14 if duration <= 90 else 18 if duration <= 120 else 24 if duration <= 180
+                  else 36 if duration <= 240 else 40 if duration <= 300
+                  else 60 if duration <= 480 else 80 if duration <= 600 else 120)
+
+    # For long videos (40+ beats), generate in chunks to avoid AI timeout
+    CHUNK_SIZE = 20  # beats per AI call
+    use_chunked = beat_count > CHUNK_SIZE
 
     # Theme-specific scene direction injected into the system prompt
     theme_direction = ""
@@ -1509,8 +1547,15 @@ def api_generate_script():
         f"Requirements:\n- {beat_count} beats, each with 2 shots (wide + detail)\n"
         f"- Hook in first 3 seconds\n- Vary camera moves between adjacent beats\n"
         f"- Rich element motion\n- Punchy narration in {language}\n"
-        f"- Bold flat background colors\n- End with hard_cut\n\n"
-        f"Output ONLY the JSON. No markdown, no code fences."
+        f"- Bold flat background colors\n- End with hard_cut\n"
+        + (f"\nLONG-FFORM VIDEO ({duration}s): This is a long-form documentary video. "
+           f"Structure it with clear chapters/sections — each section tells a distinct "
+           f"part of the story with a mini-payoff. Include callbacks to earlier beats. "
+           f"Build tension across beats. Vary pacing — some beats slower (emotional), "
+           f"some faster (action). Each narration line should be 10-25 words with "
+           f"specific facts, dates, names. NEVER repeat narration across beats.\n"
+           if duration >= 300 else "")
+        + "\nOutput ONLY the JSON. No markdown, no code fences."
     )
 
     # --- Method 1: Agnes AI (same API used for video generation, free) ---
@@ -1528,77 +1573,182 @@ def api_generate_script():
     import random as _rng
     url = "https://apihub.agnes-ai.com/v1/chat/completions"
 
-    # Retry up to 3 times with different keys (AI sometimes returns invalid JSON)
-    max_retries = 3
-    last_error = None
-    beats = None
-
-    for attempt in range(max_retries):
-        ai_key = _rng.choice(agnes_keys)
-        try:
-            payload = json.dumps({
-                "model": "agnes-2.5-flash",
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                "max_tokens": 8000,
-                "temperature": 0.8
-            }).encode("utf-8")
-            req = urllib.request.Request(url, data=payload, headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {ai_key}"
-            }, method="POST")
-            print(f"[generate-script] Attempt {attempt+1}/{max_retries}: Calling Agnes AI (agnes-2.5-flash)...")
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                raw = resp.read().decode("utf-8").strip()
-
-            resp_data = json.loads(raw)
-            content = resp_data["choices"][0]["message"]["content"].strip()
-
-            if content.startswith("```"):
-                content = re.sub(r"^```(?:json)?\s*", "", content)
-                content = re.sub(r"\s*```$", "", content)
-
-            # Extract JSON: try direct parse first, then brace-matching fallback
+    def _call_agnes(sys_prompt, usr_prompt, max_tokens=8000, timeout=120):
+        """Single Agnes AI call with retry across keys. Returns parsed JSON or None."""
+        for attempt in range(3):
+            ai_key = _rng.choice(agnes_keys)
             try:
-                beats = json.loads(content)
-            except json.JSONDecodeError:
-                match = re.search(r"\{[\s\S]*\}", content)
-                if match:
-                    try:
-                        beats = json.loads(match[0])
-                    except json.JSONDecodeError:
-                        start = content.find("{")
-                        if start >= 0:
-                            depth = 0
-                            end = start
-                            for i in range(start, len(content)):
-                                if content[i] == "{":
-                                    depth += 1
-                                elif content[i] == "}":
-                                    depth -= 1
-                                    if depth == 0:
-                                        end = i + 1
-                                        break
-                            if depth == 0:
-                                beats = json.loads(content[start:end])
-                            else:
-                                raise
-                        else:
-                            raise
+                payload = json.dumps({
+                    "model": "agnes-2.5-flash",
+                    "messages": [
+                        {"role": "system", "content": sys_prompt},
+                        {"role": "user", "content": usr_prompt}
+                    ],
+                    "max_tokens": max_tokens,
+                    "temperature": 0.8
+                }).encode("utf-8")
+                req = urllib.request.Request(url, data=payload, headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {ai_key}"
+                }, method="POST")
+                print(f"[generate-script] Agnes AI call (attempt {attempt+1}, {max_tokens} tokens)...")
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    raw = resp.read().decode("utf-8").strip()
 
-            print(f"[generate-script] Agnes AI success! {len(beats.get('beats', []))} beats")
-            break  # Success — exit retry loop
+                resp_data = json.loads(raw)
+                content = resp_data["choices"][0]["message"]["content"].strip()
 
-        except Exception as attempt_err:
-            print(f"[generate-script] Attempt {attempt+1} failed: {attempt_err}")
-            last_error = attempt_err
-            continue
+                if content.startswith("```"):
+                    content = re.sub(r"^```(?:json)?\s*", "", content)
+                    content = re.sub(r"\s*```$", "", content)
+
+                # Extract JSON: try direct parse, then brace-matching fallback
+                try:
+                    return json.loads(content)
+                except json.JSONDecodeError:
+                    match = re.search(r"\{[\s\S]*\}", content)
+                    if match:
+                        try:
+                            return json.loads(match[0])
+                        except json.JSONDecodeError:
+                            start = content.find("{")
+                            if start >= 0:
+                                depth = 0
+                                end = start
+                                for i in range(start, len(content)):
+                                    if content[i] == "{":
+                                        depth += 1
+                                    elif content[i] == "}":
+                                        depth -= 1
+                                        if depth == 0:
+                                            end = i + 1
+                                            break
+                                if depth == 0:
+                                    return json.loads(content[start:end])
+                    print(f"[generate-script] Could not parse JSON from response")
+            except Exception as attempt_err:
+                print(f"[generate-script] Attempt {attempt+1} failed: {attempt_err}")
+                continue
+        return None
+
+    if use_chunked:
+        # --- Chunked generation for long videos ---
+        # Phase 1: Generate an outline (chapter list with beat ranges)
+        print(f"[generate-script] Chunked mode: {beat_count} beats in chunks of {CHUNK_SIZE}")
+        n_chunks = (beat_count + CHUNK_SIZE - 1) // CHUNK_SIZE
+
+        outline_prompt = (
+            f"Create an outline for a {duration}-second documentary video about: {topic}\n"
+            f"Total beats: {beat_count}, divided into {n_chunks} chapters.\n"
+            f"Each chapter covers ~{CHUNK_SIZE} beats.\n"
+            f"ARC: {arc}\n"
+            f"For each chapter, provide: chapter number, title, beat range (start-end), "
+            f"and a 2-sentence summary of what happens in that chapter.\n\n"
+            f"Output ONLY valid JSON: "
+            f'{{"chapters":[{{"num":1,"title":"...","beat_start":1,"beat_end":20,'
+            f'"summary":"..."}}]}}'
+        )
+        outline = _call_agnes(system_prompt, outline_prompt, max_tokens=2000, timeout=90)
+        if not outline or "chapters" not in outline:
+            print(f"[generate-script] Outline generation failed, falling back to single call")
+            use_chunked = False
+        else:
+            chapters = outline["chapters"]
+            print(f"[generate-script] Outline: {len(chapters)} chapters")
+            all_beats_list = []
+            yt_meta = {}
+
+            for ci, chap in enumerate(chapters):
+                bs = chap.get("beat_start", ci * CHUNK_SIZE + 1)
+                be = chap.get("beat_end", bs + CHUNK_SIZE - 1)
+                n_beats = be - bs + 1
+                chap_title = chap.get("title", f"Chapter {ci+1}")
+                chap_summary = chap.get("summary", "")
+
+                chunk_sys = (
+                    "You are VOX DIRECTOR — an elite documentary video scriptwriter. "
+                    "Produce beats for ONE chapter of a Vox-style paper-collage video.\n\n"
+                    "Each beat has 2 shots (wide + detail). Vary camera moves. Rich element motion.\n"
+                    "Bold flat background colors.\n\n"
+                    "CRITICAL NARRATION RULES:\n"
+                    "- EVERY beat MUST have a UNIQUE narration line — NEVER repeat.\n"
+                    "- Each narration MUST contain specific facts, dates, names.\n"
+                    "- Each line should be 10-25 words, punchy, and informative.\n\n"
+                    'Output ONLY valid JSON with this schema:\n'
+                    '{"beats":[{"id":N,"title_cn":"","title_en":"HEADLINE","bg":"color",'
+                    '"feel":"tone","hook":"hook_pattern","narration":"...",'
+                    '"shots":[{"id":"a","dur":5,"title":true,"shot_size":"WIDE",'
+                    '"camera_move":"push_in","scene":"...","element_motion":"..."},'
+                    '{"id":"b","dur":5,"title":false,"shot_size":"CLOSE",'
+                    '"camera_move":"parallax","scene":"...","element_motion":"..."}]}]}'
+                )
+                if theme == "stick-figure":
+                    chunk_sys += theme_direction
+
+                chunk_usr = (
+                    f"Create {n_beats} beats for chapter {ci+1} of a documentary about: {topic}\n"
+                    f"CHAPTER TITLE: {chap_title}\n"
+                    f"CHAPTER SUMMARY: {chap_summary}\n"
+                    f"Beat IDs: {bs} to {be}\n"
+                    f"ASPECT: {aspect}\nTHEME: {theme}\nLANGUAGE: {language}\n\n"
+                    + ("This is a LONG-FORM video. Include specific facts, dates, names. "
+                       "Build tension. Vary pacing.\n" if duration >= 300 else "")
+                    + "Output ONLY the JSON. No markdown, no code fences."
+                )
+
+                max_tok = min(16000, 2000 + n_beats * 250)
+                chunk_result = _call_agnes(chunk_sys, chunk_usr, max_tokens=max_tok, timeout=120)
+
+                if chunk_result and "beats" in chunk_result:
+                    chunk_beats = chunk_result["beats"]
+                    # Fix beat IDs to be sequential
+                    for bi, b in enumerate(chunk_beats):
+                        b["id"] = bs + bi
+                    all_beats_list.extend(chunk_beats)
+                    print(f"[generate-script] Chapter {ci+1}: {len(chunk_beats)} beats (total: {len(all_beats_list)})")
+
+                    # Grab YT metadata from first chunk
+                    if ci == 0:
+                        yt_meta["yt_title"] = chunk_result.get("yt_title", topic.title())
+                        yt_meta["yt_description"] = chunk_result.get("yt_description", "")
+                        yt_meta["yt_tags"] = chunk_result.get("yt_tags", ["history", "documentary"])
+                else:
+                    print(f"[generate-script] Chapter {ci+1} FAILED — skipping")
+
+            if all_beats_list:
+                beats = {
+                    "project": topic.lower().replace(" ", "-")[:50],
+                    "topic": topic,
+                    "language": language,
+                    "aspect": aspect,
+                    "style": "collage",
+                    "provider": "free",
+                    "theme": theme,
+                    "arc": arc,
+                    "voice": {"voice_id": voice, "language": language, "speed": 1.0},
+                    "music": "dramatic documentary",
+                    "caption_style": "white",
+                    "captions": True,
+                    "watermark": "",
+                    "yt_title": yt_meta.get("yt_title", topic.title()),
+                    "yt_description": yt_meta.get("yt_description", f"A deep dive into {topic}."),
+                    "yt_tags": yt_meta.get("yt_tags", ["history", "documentary", "educational"]),
+                    "beats": all_beats_list,
+                }
+                print(f"[generate-script] Chunked success! {len(all_beats_list)} total beats")
+            else:
+                print(f"[generate-script] All chunks failed")
+                return jsonify({"error": "AI script generation failed — all chunks returned empty"}), 502
+
+    if not use_chunked:
+        # --- Single-call generation (short videos) ---
+        beats = _call_agnes(system_prompt, user_prompt,
+                            max_tokens=min(32000, 2000 + beat_count * 250),
+                            timeout=120)
 
     if not beats:
-        print(f"[generate-script] All {max_retries} attempts failed.")
-        return jsonify({"error": f"AI script generation failed after {max_retries} attempts: {last_error}. Check Agnes API keys (.agnes_keys)."}), 502
+        print(f"[generate-script] All attempts failed.")
+        return jsonify({"error": f"AI script generation failed after 3 attempts. Check Agnes API keys (.agnes_keys)."}), 502
 
     try:
         # Ensure required fields
@@ -2357,7 +2507,7 @@ def api_auto_run():
             import urllib.request
             payload = json.dumps({
                 "topic": idea["topic"],
-                "duration": 45,
+                "duration": 600,  # 10 min long-form (YouTube pushes long videos)
                 "aspect": "16:9",
                 "theme": "newsprint-editorial",
                 "arc": "hook_payoff",
@@ -2372,7 +2522,7 @@ def api_auto_run():
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=120) as resp:
+            with urllib.request.urlopen(req, timeout=300) as resp:
                 script_data = json.loads(resp.read().decode("utf-8"))
 
             if "error" in script_data:
@@ -2413,7 +2563,7 @@ def api_auto_run():
             run["step"] = "video"
             start = time.time()
             last_status = ""
-            while time.time() - start < 2400:  # 40 min timeout (10 beats takes ~20 min)
+            while time.time() - start < 7200:  # 2 hour timeout (long 10-min videos)
                 req3 = urllib.request.Request(f"http://localhost:9200/api/jobs")
                 with urllib.request.urlopen(req3, timeout=10) as resp3:
                     jobs_data = json.loads(resp3.read().decode("utf-8"))
@@ -2605,7 +2755,7 @@ def api_auto_schedule():
 
         cron_data = json.loads(cron_path.read_text()) if cron_path.exists() else []
         for job in cron_data:
-            if job.get("id") == "vox-tube-daily":
+            if job.get("id") == "vox-weekly-batch":
                 if enabled is not None:
                     job["enabled"] = enabled
                 if schedule:
@@ -2613,6 +2763,72 @@ def api_auto_schedule():
         with open(cron_path, "w") as f:
             json.dump(cron_data, f, indent=2)
         return jsonify({"status": "updated", "cron": cron_data})
+
+
+@app.route("/api/auto/weekly-batch", methods=["POST"])
+def api_auto_weekly_batch():
+    """Run the weekly batch: generate 4 long-form videos autonomously."""
+    global autonomous_counter
+    data = request.json or {}
+    count = data.get("count", 4)
+    skip_research = data.get("skip_research", False)
+
+    with auto_lock:
+        run_id = f"batch_{autonomous_counter}"
+        autonomous_counter += 1
+        autonomous_runs[run_id] = {
+            "id": run_id,
+            "type": "weekly_batch",
+            "status": "running",
+            "step": "starting",
+            "progress": 0,
+            "log": [],
+            "result": None,
+            "error": None,
+            "videos": [],
+            "count": count,
+            "created_at": time.time(),
+        }
+
+    def run_batch(run_id, count, skip_research):
+        run = autonomous_runs[run_id]
+
+        def log(msg):
+            ts = datetime.now().strftime('%H:%M:%S')
+            run["log"].append(f"[{ts}] {msg}")
+            if len(run["log"]) > 300:
+                run["log"] = run["log"][-200:]
+
+        try:
+            sys.path.insert(0, str(SCRIPTS))
+            from weekly_batch import run_weekly_batch as _run_batch
+
+            # Monkey-patch the log function to capture output
+            import weekly_batch as wb_module
+            _orig_log = wb_module.log
+            def _capture_log(msg, level="INFO"):
+                _orig_log(msg, level)
+                log(f"{level}: {msg}")
+
+            wb_module.log = _capture_log
+
+            log(f"🤖 Weekly batch started: {count} videos")
+
+            # Run the batch
+            _run_batch(count=count, dry_run=False, skip_research=skip_research)
+
+            run["status"] = "done"
+            run["progress"] = 100
+            log("✅ Weekly batch complete!")
+
+        except Exception as e:
+            run["status"] = "error"
+            run["error"] = str(e)
+            log(f"❌ Error: {e}")
+
+    thread = threading.Thread(target=run_batch, args=(run_id, count, skip_research), daemon=True)
+    thread.start()
+    return jsonify({"run_id": run_id, "status": "started", "count": count})
 
 
 if __name__ == "__main__":

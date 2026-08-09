@@ -37,9 +37,10 @@ UA = "vox-director-free/0.1"
 # ---- Pollinations "sana" is the current default model; flux also works when available
 DEFAULT_IMAGE_MODEL = "sana"
 
-# ---- Agnes AI (free video generation, image-to-video)
+# ---- Agnes AI (free video generation, image-to-video + text-to-image)
 AGNES_API_BASE = "https://apihub.agnes-ai.com"
 AGNES_VIDEO_MODEL = "agnes-video-v2.0"
+AGNES_IMAGE_MODEL = "agnes-image-2.1-flash"
 
 # Aspect ratio -> pixel dims (kept at 1024 on the long edge for free tier speed)
 ASPECT_DIMS = {
@@ -115,31 +116,36 @@ class FreeProviderError(RuntimeError):
 
 # ------------------------------------------------------------------ helpers
 
-def _curl(url, dest, timeout=120, retries=3):
-    """Download via curl (urllib breaks on some CDNs)."""
+def _curl(url, dest, timeout=120, retries=3, is_image=True):
+    """Download via curl (urllib breaks on some CDNs).
+    If is_image=True, validates the downloaded file is a valid image via PIL."""
     for attempt in range(retries):
         r = subprocess.run(
             ["/usr/bin/curl", "-sL", "--retry", str(retries),
              "-m", str(timeout), "-o", dest, url],
             capture_output=True, text=True)
         if os.path.exists(dest) and os.path.getsize(dest) > 100:
-            # Verify it's actually an image (not a JSON error response)
-            try:
-                from PIL import Image
-                img = Image.open(dest)
-                img.verify()  # verify it's a valid image
+            if is_image:
+                # Verify it's actually an image (not a JSON error response)
+                try:
+                    from PIL import Image
+                    img = Image.open(dest)
+                    img.verify()  # verify it's a valid image
+                    return dest
+                except Exception:
+                    # Not a valid image — Pollinations returned an error JSON
+                    # On retry, change the seed slightly to get a different result
+                    if attempt < retries - 1 and "seed=" in url:
+                        import random
+                        new_seed = random.randint(1, 999999)
+                        url = url.split("seed=")[0] + f"seed={new_seed}&nologo=true"
+                        print(f"      [pollinations] retry {attempt+1} with new seed (got non-image)")
+                    os.remove(dest)
+                    time.sleep(3 * (attempt + 1))
+                    continue
+            else:
+                # Non-image file (e.g. video) — just check size
                 return dest
-            except Exception:
-                # Not a valid image — Pollinations returned an error JSON
-                # On retry, change the seed slightly to get a different result
-                if attempt < retries - 1 and "seed=" in url:
-                    import random
-                    new_seed = random.randint(1, 999999)
-                    url = url.split("seed=")[0] + f"seed={new_seed}&nologo=true"
-                    print(f"      [pollinations] retry {attempt+1} with new seed (got non-image)")
-                os.remove(dest)
-                time.sleep(3 * (attempt + 1))
-                continue
         time.sleep(2 * (attempt + 1))
     raise FreeProviderError(f"download failed: {url} -> {dest} ({r.stderr[:200]})")
 
@@ -201,6 +207,83 @@ def _agnes_create_task(prompt, image_url, duration=5, width=1024, height=576, ke
     return video_id
 
 
+def _agnes_generate_image(prompt, key=None):
+    """Generate an image via Agnes AI text-to-image. Returns the image URL.
+    Uses round-robin key rotation for parallel generation across 12 keys.
+
+    Agnes AI always returns 1024x1024; caller is responsible for cropping
+    to the target aspect ratio via PIL."""
+    if key is None:
+        key = _agnes_next_key()
+    if not key:
+        raise FreeProviderError("No Agnes API keys available for image generation")
+
+    payload = json.dumps({
+        "model": AGNES_IMAGE_MODEL,
+        "prompt": prompt,
+        "n": 1,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        f"{AGNES_API_BASE}/v1/images/generations",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=120) as resp:
+        result = json.loads(resp.read().decode("utf-8"))
+    data_list = result.get("data") or []
+    if not data_list:
+        raise FreeProviderError(f"Agnes AI image: no data in response: {result}")
+    url = data_list[0].get("url")
+    if not url:
+        raise FreeProviderError(f"Agnes AI image: no URL in response: {result}")
+    return url
+
+
+def _agnes_generate_image_with_retry(prompt, max_key_tries=4):
+    """Generate an image, retrying with different keys on failure."""
+    last_err = None
+    for _ in range(max_key_tries):
+        key = _agnes_next_key()
+        if not key:
+            break
+        try:
+            return _agnes_generate_image(prompt, key=key)
+        except Exception as e:
+            last_err = str(e)
+            time.sleep(2)
+    raise FreeProviderError(f"Agnes AI image generation failed after {max_key_tries} tries: {last_err}")
+
+
+def _crop_to_aspect(src_path, dest_path, target_w, target_h):
+    """Center-crop an image to the target aspect ratio using PIL."""
+    from PIL import Image
+    img = Image.open(src_path)
+    src_w, src_h = img.size
+    target_ratio = target_w / target_h
+    src_ratio = src_w / src_h
+
+    if src_ratio > target_ratio:
+        # Source is wider — crop width
+        new_w = int(src_h * target_ratio)
+        new_h = src_h
+    else:
+        # Source is taller — crop height
+        new_w = src_w
+        new_h = int(src_w / target_ratio)
+
+    left = (src_w - new_w) // 2
+    top = (src_h - new_h) // 2
+    img = img.crop((left, top, left + new_w, top + new_h))
+    # Resize to exact target dimensions
+    img = img.resize((target_w, target_h), Image.LANCZOS)
+    img.save(dest_path, "JPEG", quality=92)
+    return dest_path
+
+
 def _agnes_create_task_with_retry(prompt, image_url, duration=5, width=1024, height=576, max_key_tries=8):
     """Create an Agnes task, retrying with different keys if queue is full."""
     keys = _load_agnes_keys()
@@ -226,7 +309,10 @@ def _agnes_create_task_with_retry(prompt, image_url, duration=5, width=1024, hei
 
 
 def _agnes_get_result(video_id, key=None):
-    """Poll Agnes AI task. Returns (status, url) where url is the video URL or None."""
+    """Poll Agnes AI task. Returns (status, url) where url is the video URL or None.
+    Handles transient HTTP errors (429 rate limit, 5xx) by returning 'pending'
+    instead of raising — so the caller doesn't treat a rate-limited status query
+    as a task failure."""
     if key is None:
         key = _agnes_api_key()
     req = urllib.request.Request(
@@ -234,8 +320,25 @@ def _agnes_get_result(video_id, key=None):
         headers={"Authorization": f"Bearer {key}"},
         method="GET",
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        result = json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        # 429 = status query rate limited — task is still running, just can't
+        # check right now. Return pending so caller retries later.
+        if e.code == 429:
+            return "pending", None
+        # 404 = task expired or not found — genuinely failed
+        if e.code == 404:
+            return "failed", "task not found (expired)"
+        # 5xx = server error — transient, return pending
+        if 500 <= e.code < 600:
+            return "pending", None
+        # Other HTTP errors — treat as failed
+        return "failed", f"HTTP {e.code}"
+    except urllib.error.URLError as e:
+        # Timeout or connection error — transient, return pending
+        return "pending", None
     status = result.get("status", "unknown")
     if status == "completed":
         url = result.get("url") or (result.get("metadata") or {}).get("url")
@@ -271,22 +374,33 @@ class FreeProvider:
     # ---- image generation (Pollinations) ----
 
     def submit_image(self, model, prompt, **params):
-        """Returns a job_id that get_status() polls.  We encode the full request
-        as a JSON blob so get_status can reconstruct the URL."""
+        """Returns a job_id that get_status() polls. Uses Agnes AI text-to-image
+        with multi-key rotation for fast parallel keyframe generation.
+        Falls back to Pollinations if no Agnes keys available."""
         aspect = params.get("aspect_ratio", "16:9")
         w, h = ASPECT_DIMS.get(aspect, ASPECT_DIMS["16:9"])
-        model_name = model.split("/")[-1] if "/" in model else model
-        if model_name not in ("flux", "turbo", "sana", "stable-diffusion"):
-            model_name = DEFAULT_IMAGE_MODEL
-        # Generate a unique seed per prompt (hash of prompt + random) so
-        # different scenes get different images even when submitted together.
-        import hashlib
-        prompt_hash = int(hashlib.md5(prompt.encode()).hexdigest()[:8], 16)
-        seed = params.get("seed", prompt_hash + int(time.time()) % 1000)
-        encoded = urllib.parse.quote(prompt, safe="")
-        url = (f"{POLLINATIONS_BASE}/{encoded}"
-               f"?width={w}&height={h}&model={model_name}&seed={seed}&nologo=true")
-        job = {"type": "image", "url": url, "public_url": url, "started": time.time()}
+
+        if _agnes_has_keys():
+            job = {
+                "type": "agnes_image",
+                "prompt": prompt,
+                "width": w,
+                "height": h,
+                "aspect": aspect,
+                "started": time.time(),
+            }
+        else:
+            # Fallback: Pollinations (anonymous, rate-limited)
+            model_name = model.split("/")[-1] if "/" in model else model
+            if model_name not in ("flux", "turbo", "sana", "stable-diffusion"):
+                model_name = DEFAULT_IMAGE_MODEL
+            import hashlib
+            prompt_hash = int(hashlib.md5(prompt.encode()).hexdigest()[:8], 16)
+            seed = params.get("seed", prompt_hash + int(time.time()) % 1000)
+            encoded = urllib.parse.quote(prompt, safe="")
+            url = (f"{POLLINATIONS_BASE}/{encoded}"
+                   f"?width={w}&height={h}&model={model_name}&seed={seed}&nologo=true")
+            job = {"type": "image", "url": url, "public_url": url, "started": time.time()}
         return json.dumps(job)
 
     # ---- video generation (local ffmpeg zoompan) ----
@@ -376,7 +490,30 @@ class FreeProvider:
         job = json.loads(job_id)
         jtype = job["type"]
 
-        if jtype == "image":
+        if jtype == "agnes_image":
+            # Generate image via Agnes AI text-to-image. Returns the PUBLIC Agnes
+            # image URL (like Pollinations did) so keyframe_url is usable by
+            # Agnes video generation later. The crop to target aspect ratio
+            # happens in keyframes.py after download (Agnes returns 1024x1024).
+            try:
+                img_url = _agnes_generate_image_with_retry(job["prompt"])
+                return {"status": "completed", "output": img_url, "error": None}
+            except Exception as e:
+                # Fallback to Pollinations on Agnes failure
+                print(f"      [agnes-image] failed ({e}), trying Pollinations fallback")
+                try:
+                    encoded = urllib.parse.quote(job["prompt"], safe="")
+                    import hashlib
+                    seed = int(hashlib.md5(job["prompt"].encode()).hexdigest()[:8], 16)
+                    poll_url = (f"{POLLINATIONS_BASE}/{encoded}"
+                                f"?width={job['width']}&height={job['height']}"
+                                f"&model=sana&seed={seed}&nologo=true")
+                    return {"status": "completed", "output": poll_url, "error": None}
+                except Exception as e2:
+                    return {"status": "failed", "output": None,
+                            "error": f"Agnes: {e}; Pollinations fallback: {e2}"}
+
+        elif jtype == "image":
             # Download the Pollinations image to a local path, but return the
             # public Pollinations URL as output — so keyframes.py stores the
             # public URL in keyframe_url (which Agnes AI needs for video).
@@ -429,7 +566,7 @@ class FreeProvider:
                         status, vurl = _agnes_get_result(
                             job["agnes_video_id"], key=job.get("agnes_key"))
                         if status == "completed" and vurl:
-                            _curl(vurl, tmp_out, timeout=120)
+                            _curl(vurl, tmp_out, timeout=120, is_image=False)
                             return {"status": "completed", "output": tmp_out, "error": None}
                         if status == "failed":
                             # fall back to ffmpeg

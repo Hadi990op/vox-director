@@ -99,6 +99,40 @@ def painterly_prompt(motion):
             f"Gentle, cinematic, no morphing, no new objects.")
 
 
+def stick_figure_prompt(camera, element_motion=None, feel=None, palette=None,
+                        amplitude="punchy", has_title=True, constraints="strict"):
+    """Stick-figure animation motion prompt. Emphasizes CHARACTER animation —
+    stick figures walking, running, gesturing — mixed with Vox collage elements."""
+    cam = CAMERA_VOCAB.get(camera, camera)
+    element = element_motion or ("the stick-figure characters perform their actions — walking, "
+                                  "gesturing, pointing, carrying, falling; their limbs and bodies "
+                                  "move with energy")
+    feel = feel or "playful, clear, energetic — like an animated infographic"
+    palette = palette or "bold flat primary colors, high contrast"
+    amp = AMPLITUDE.get(amplitude, AMPLITUDE["punchy"])
+    text_lock = ("Keep the HEADLINE TEXT sharp, legible and stable — do not warp or wobble the "
+                 "lettering. " if has_title else "")
+    if constraints == "loose":
+        guard = (text_lock + "Keep the stick-figure look (simple line characters, not detailed "
+                 "illustrations). Otherwise explore freely.")
+    else:
+        guard = (text_lock + "Stay flat 2D — no 3D rotation, no perspective change. Keep the stick "
+                 "figures' proportions stable (don't stretch or morph limbs unnaturally). ONE "
+                 "continuous camera move that does not loop or reset. Animate the motion only; "
+                 "don't re-render the picture.")
+    return (
+        "Animate this still into a 2D STICK-FIGURE CHARACTER ANIMATION mixed with paper collage.\n"
+        f"CAMERA (one move only): {cam}.\n"
+        f"CHARACTER MOTION (this is the energy, {amp}): {element}. The stick figures ACT — they "
+        "walk, run, gesture, point, carry, fall, jump. Limbs swing, bodies lean, heads turn. "
+        "Simple black-line stick figures moving with clear, readable body language.\n"
+        "AESTHETIC: keep the bold flat backgrounds, torn paper scraps, halftone dots, washi tape "
+        "and paper cut-out textures. Stick figures stay as simple lines and circles.\n"
+        f"FEEL: {feel}.\nCOLOR: {palette}.\n"
+        f"CONSTRAINTS: {guard}"
+    )
+
+
 def run(project_dir, only=None):
     bpath = os.path.join(project_dir, "beats.json")
     with open(bpath) as f:
@@ -148,7 +182,12 @@ def run(project_dir, only=None):
             # new schema: camera_move (token) + element_motion (rich). Back-compat: old `motion`.
             camera = shot.get("camera_move") or shot.get("motion", "push_in")
             element = shot.get("element_motion")
-            if style == "collage":
+            theme_name = doc.get("theme", "")
+            if theme_name == "stick-figure" or _theme.get("idiom") == "stick-figure":
+                prompt = stick_figure_prompt(camera, element_motion=element, feel=beat.get("feel"),
+                                             palette=beat.get("bg"), amplitude=motion_style,
+                                             has_title=shot.get("title", True), constraints=constraints)
+            elif style == "collage":
                 prompt = collage_prompt(camera, element_motion=element, feel=beat.get("feel"),
                                         palette=beat.get("bg"), amplitude=motion_style,
                                         anchor_freeze=doc.get("anchor_freeze"),
@@ -169,7 +208,10 @@ def run(project_dir, only=None):
             by_key[key] = shot
             print(f"[{key}] queued ({dur}s, {model.split('/')[1]})")
 
-    done = run_jobs(prov, specs, poll_s=5, stall_s=240, max_retries=2, deadline_s=1200)
+    # Scale deadline by clip count — long videos need much more time for video gen
+    n_specs = len(specs)
+    deadline = 1200 if n_specs <= 20 else 2400 if n_specs <= 40 else 3600 if n_specs <= 80 else 5400
+    done = run_jobs(prov, specs, poll_s=10, stall_s=240, max_retries=3, deadline_s=deadline)
 
     for key, url in done.items():
         if not url:

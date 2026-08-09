@@ -109,6 +109,16 @@ STYLE_LIBRARY = {
         "print dots, slight print misregistration. Hushed, opulent, museum-vitrine calm — "
         "reads like a perfume-house press page, not a pop ad."
     ),
+    "stick-figure": (
+        "Bold 2D stick-figure character animation collage: simple black-line stick figures "
+        "with round heads, expressive poses and gestures, drawn as hand-cut paper cut-outs "
+        "on bold flat backgrounds. Characters are minimalist stick people (lines for limbs, "
+        "circle heads, no detailed faces) that ACT and EMOTE through body language. Props "
+        "and scenery are also simple flat paper shapes. Mixed with Vox-style collage elements: "
+        "torn paper scraps, halftone dots, washi tape, newspaper clippings. The stick figures "
+        "are the STORYTELLERS — they walk, run, gesture, point, carry objects, fall, jump. "
+        "Playful, clear, universally readable. Think animated infographic meets flipbook."
+    ),
 }
 DEFAULT_STYLE = "american-retro"
 
@@ -146,6 +156,9 @@ THEME_PRESETS = {
     "gilded-deco": {"idiom": "gilded-deco", "palette": "aged cream, champagne gold, charcoal black, muted deep gold",
         "type_style": "elegant high-contrast didone serif, wide letter-spacing", "finish": "gold foil, aged paper grain, fine halftone, slight misregistration",
         "mood": "luxurious, calm, vintage editorial", "motion_style": "calm"},
+    "stick-figure": {"idiom": "stick-figure", "palette": "bold flat primary colors — red, blue, yellow on cream or white",
+        "type_style": "bold rounded sans-serif, friendly, all-caps", "finish": "flat color, minimal texture, clean black outline",
+        "mood": "playful, clear, energetic", "motion_style": "punchy"},
 }
 
 
