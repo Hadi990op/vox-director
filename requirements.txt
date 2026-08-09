@@ -1,0 +1,22 @@
+# Vox Director — Python dependencies
+# Install: pip install -r requirements.txt
+
+# Web UI
+Flask>=3.0
+
+# Image processing (keyframes, thumbnails, collage post-processing)
+Pillow>=10.0
+
+# AI voice-over (free TTS, no API key needed)
+edge-tts>=6.1
+
+# HTTP client (for Agnes AI API calls)
+requests>=2.31
+
+# YouTube Data API v3 (direct upload, OAuth 2.0)
+google-api-python-client>=2.100
+google-auth-oauthlib>=1.1
+google-auth-httplib2>=0.2
+
+# YouTube competitor research (search + metadata, no API key needed)
+yt-dlp>=2024.0

@@ -81,36 +81,63 @@ Two human decision gates keep you in control (approve the beat map; pick the sty
 
 Model IDs drift — the skill fetches the live list from `GET https://api.atlascloud.ai/api/v1/models` before running.
 
-## Install
+## Quick Start (Standalone — No Coding Agent Needed)
 
-This is an **agent skill** — it works with any coding agent that can read a workflow and run scripts (Claude Code, Codex, …). Claude Code auto-discovers it as a skill; other agents read [`AGENTS.md`](AGENTS.md) → [`SKILL.md`](SKILL.md).
+Clone and run the web studio directly:
 
-**Option A — from this repo:**
 ```bash
-git clone https://github.com/Alisa0808/vox-director.git ~/.claude/skills/vox-director
+git clone https://github.com/Hadi990op/vox-director.git
+cd vox-director
+
+# 1. Install system dependencies
+sudo apt-get install -y ffmpeg
+
+# 2. Install Python dependencies
+pip install -r requirements.txt
+
+# 3. Add Agnes AI API keys (free keys from https://platform.agnes-ai.com/)
+#    One key per line, comments with #
+echo "your-agnes-key-1" > .agnes_keys
+echo "your-agnes-key-2" >> .agnes_keys
+chmod 600 .agnes_keys
+
+# 4. (Optional) Set up YouTube upload — requires Google OAuth credentials
+#    Create a Web Application credential at https://console.cloud.google.com/
+#    Set redirect URI to: http://localhost:9200/api/yt/callback
+#    Save as client_secret.json in the project root
+
+# 5. Start the studio
+python3 studio.py
+# Open http://localhost:9200 in your browser
 ```
 
-**Option B — from the packaged skill:** download [`vox-director.skill`](vox-director.skill) and install it via your Claude skills UI.
+Then just type a topic in the studio UI, pick duration/theme, and click **Generate**. The pipeline runs automatically: script → keyframes → clips → voice-over → assemble → final.mp4.
 
-Then set your Atlas Cloud API key (get one at [atlascloud.ai/console/api-keys](https://www.atlascloud.ai/console/api-keys?utm_source=github&utm_campaign=vox_director)):
+## Autonomous Mode (4 videos/week, fully hands-off)
+
 ```bash
-export ATLASCLOUD_API_KEY="sk-..."
+# Generate 4 unique ideas from competitor research (dry run)
+python3 scripts/weekly_batch.py --dry-run --count 4
+
+# Full batch: research → ideas → scripts → videos → YouTube upload
+python3 scripts/weekly_batch.py --count 4 --skip-research
+
+# Single autonomous video
+python3 scripts/auto_runner.py
 ```
 
-## Quick start
-
-Just ask your coding agent, with the skill installed:
-
-> *"Make me a Vox-style collage video introducing Mexican street food — English, 16:9, 15 seconds."*
-
-The agent will draft a beat map for your approval, run a style bake-off for you to pick from, then generate keyframes → motion → voice → music and assemble `out/<project>/final.mp4`.
+Requirements for autonomous mode:
+- `.agnes_keys` file with 1+ Agnes AI keys
+- `client_secret.json` + `.youtube_token.json` for YouTube uploads (run OAuth flow first via the studio UI)
+- `out/competitor_research.json` (run `python3 scripts/competitor_watcher.py` to generate, or the batch will do it automatically)
 
 ## Requirements
 
-- A **coding agent** — Claude Code, Codex, or similar
-- **Atlas Cloud** API key
-- **ffmpeg** + **ffprobe** (`brew install ffmpeg`)
-- **Python 3** with **Pillow** (`pip install pillow`) — for caption/watermark overlays
+- **Python 3.9+** with pip
+- **ffmpeg** + **ffprobe** (`apt-get install ffmpeg` or `brew install ffmpeg`)
+- **Agnes AI** API key(s) — free at [platform.agnes-ai.com](https://platform.agnes-ai.com/) — used for script generation, image generation, and video motion
+- **yt-dlp** — installed automatically with `pip install -r requirements.txt` (for competitor research)
+- **Google OAuth credentials** (optional) — only needed for YouTube upload. Create a Web Application OAuth client at [console.cloud.google.com](https://console.cloud.google.com/), set the redirect URI to `http://localhost:9200/api/yt/callback`, and save as `client_secret.json`
 
 ## What's in the box
 
