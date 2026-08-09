@@ -23,6 +23,7 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
 import time
 from pathlib import Path
 
@@ -133,6 +134,9 @@ def upload_video(video_path, title, description, tags, privacy="public"):
     from googleapiclient.http import MediaFileUpload
 
     youtube = get_authenticated_service()
+
+    # Ensure video_path is a Path object
+    video_path = Path(video_path)
 
     body = {
         "snippet": {
@@ -292,7 +296,7 @@ def main():
     print(f"  Title: {title}")
     print()
 
-    result = upload_video(str(video_path), title, description, tags, args.privacy)
+    result = upload_video(video_path, title, description, tags, args.privacy)
     print()
     print(json.dumps(result, indent=2))
     if "error" in result:
