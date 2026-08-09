@@ -121,7 +121,9 @@ def manage_pipeline(project_dir, max_step_retries=3, progress_callback=None):
     kf_timeout = 300 if n_shots <= 20 else 1200 if n_shots <= 80 else 2400
     clips_timeout = 1200 if n_shots <= 20 else 3600 if n_shots <= 80 else 5400
     audio_timeout = 300 if n_shots <= 20 else 1200 if n_shots <= 80 else 2400
-    assemble_timeout = 120 if n_shots <= 20 else 600 if n_shots <= 80 else 1800
+    # Assemble: each shot needs an ffmpeg pass (~30s each) + final composite.
+    # 158 shots × 30s = ~80 min just for segments. Use generous timeouts.
+    assemble_timeout = 300 if n_shots <= 20 else 3600 if n_shots <= 80 else 7200
 
     steps = [
         ("keyframes", "keyframes.py", kf_timeout),

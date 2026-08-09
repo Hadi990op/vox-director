@@ -112,8 +112,18 @@ def run(project_dir):
 
     # ---- 1) normalise each shot to a silent segment of exactly its dur ----
     seg_files = []
+    resumed = 0
     for i, s in enumerate(segs):
         out = os.path.join(tmp, f"seg_{i:02d}.mp4")
+        # Resume support: if a valid segment already exists from a previous
+        # (interrupted) attempt, skip the expensive ffmpeg pass. A valid
+        # segment is a non-empty mp4 whose duration is within 0.2s of target.
+        if os.path.exists(out) and os.path.getsize(out) > 1000:
+            existing_dur = probe_dur(out)
+            if abs(existing_dur - s["dur"]) < 0.3:
+                seg_files.append(out)
+                resumed += 1
+                continue
         # If the clip is shorter than the segment (narration longer than the AI
         # clip), slow it to fill instead of freezing the last frame.
         cd = probe_dur(s["clip"])
@@ -130,6 +140,8 @@ def run(project_dir):
         ff(["-i", s["clip"], "-an", "-filter_complex", fc, "-map", "[v]", "-t", f"{s['dur']}",
             "-c:v", "libx264", "-pix_fmt", "yuv420p", out])
         seg_files.append(out)
+    if resumed:
+        print(f"[assemble] Resumed {resumed}/{len(segs)} existing segments")
 
     # ---- 2) concat all shot segments (video only) ----
     listf = os.path.join(tmp, "list.txt")
