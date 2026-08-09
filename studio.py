@@ -17,7 +17,7 @@ import sys
 import shutil
 import urllib.parse
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 from flask import Flask, request, jsonify, render_template_string, send_file, make_response
 
@@ -516,6 +516,7 @@ a { color:var(--accent); text-decoration:none; }
   <header>
     <h1>Vox <span class="v">Director</span> Studio</h1>
     <p>Turn any topic into a Vox-style paper-collage video — 100% free, no login needed</p>
+    <div id="composio-status" style="margin-top:10px;font-size:13px;min-height:20px;">Loading YouTube connection status…</div>
   </header>
 
   <!-- Create Video Form -->
@@ -573,6 +574,7 @@ a { color:var(--accent); text-decoration:none; }
           <option value="atomic-age">Atomic Age (science, space)</option>
           <option value="newsprint-editorial" selected>Newsprint Editorial (news, tech)</option>
           <option value="gilded-deco">Gilded Deco (luxury, heritage)</option>
+          <option value="stick-figure">Stick Figure (2D character animation)</option>
         </select>
       </div>
       <div>
@@ -643,6 +645,60 @@ a { color:var(--accent); text-decoration:none; }
     <div style="font-size:12px;color:var(--dim);margin-bottom:10px;" id="history-count"></div>
     <div id="jobs-list">
       <div class="empty">No videos yet. Create one above!</div>
+    </div>
+  </div>
+
+  <!-- Autonomous Mode -->
+  <div class="card" style="border-color:var(--accent);">
+    <h2>🤖 Autonomous Mode <span style="font-size:12px;color:var(--dim);font-weight:400" id="auto-active-count"></span></h2>
+    <p style="color:var(--dim);font-size:13px;margin-bottom:16px">
+      Automatically researches viral history videos from faceless channels, generates unique ideas, creates videos, and uploads to YouTube.
+    </p>
+
+    <!-- Quick Actions -->
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px">
+      <button onclick="runFullAuto()" style="padding:12px 20px;border-radius:10px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-weight:700;font-size:14px">🚀 Full Auto Run</button>
+      <button onclick="runResearch()" style="padding:12px 20px;border-radius:10px;border:1px solid var(--border);background:var(--card2);color:var(--text);cursor:pointer;font-weight:600;font-size:14px">🔍 Research Now</button>
+    </div>
+
+    <!-- Idea Generator -->
+    <div style="border-top:1px solid var(--border);padding-top:16px;margin-bottom:16px">
+      <label style="font-size:12px;color:var(--dim);margin-bottom:5px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Topic (optional — leave empty for auto-generate)</label>
+      <input type="text" id="auto-topic-input" placeholder="e.g. The Strange History of Coffee" style="width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;margin-bottom:10px" />
+      <button onclick="generateIdea()" style="padding:10px 16px;border-radius:8px;border:1px solid var(--border);background:var(--card2);color:var(--text);cursor:pointer;font-weight:600;font-size:13px">🧠 Generate Idea</button>
+      <button onclick="generateAutoVideo()" style="padding:10px 16px;border-radius:8px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-weight:600;font-size:13px;margin-left:8px">🎬 Generate Video</button>
+      <div id="idea-result" style="margin-top:12px"></div>
+    </div>
+
+    <!-- Active Run Progress -->
+    <div id="auto-run-section" style="display:none;border-top:1px solid var(--border);padding-top:16px;margin-bottom:16px">
+      <h3 style="font-size:14px;margin-bottom:10px">⚡ Active Run</h3>
+      <div id="auto-run-progress"></div>
+    </div>
+
+    <!-- Competitor Research -->
+    <div style="border-top:1px solid var(--border);padding-top:16px;margin-bottom:16px">
+      <h3 style="font-size:14px;margin-bottom:10px">📊 Competitor Research — Viral History Videos</h3>
+      <div id="competitor-list"></div>
+    </div>
+
+    <!-- Schedule -->
+    <div style="border-top:1px solid var(--border);padding-top:16px;margin-bottom:16px">
+      <h3 style="font-size:14px;margin-bottom:10px">⏰ Daily Schedule</h3>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="schedule-enabled" onchange="toggleSchedule()" style="width:auto;margin:0" />
+          <span style="font-size:13px">Enable daily auto-run</span>
+        </label>
+        <span id="schedule-status" style="font-size:13px;color:var(--dim)">🔴 Disabled</span>
+      </div>
+      <p style="font-size:12px;color:var(--dim);margin-top:8px">Runs at 18:00 UTC (2pm EST / 11am PST) — USA peak viewing time</p>
+    </div>
+
+    <!-- History -->
+    <div style="border-top:1px solid var(--border);padding-top:16px">
+      <h3 style="font-size:14px;margin-bottom:10px">📜 Autonomous Run History</h3>
+      <div id="auto-history"></div>
     </div>
   </div>
 </div>
@@ -1050,20 +1106,254 @@ async function deleteJob(id) {
 }
 
 async function uploadToYT(id) {
-  // Send YT metadata along with the upload request
   const meta = ytMetadata[id] || {};
-  const res = await fetch('api/upload-yt/' + id, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(meta)
-  });
-  const data = await res.json();
-  if (data.error) alert('Error: ' + data.error);
-  else alert('Video sent to YouTube Upload Manager! Title & description auto-filled. Open the YT Upload page to schedule/upload.');
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = '⏳ Uploading...';
+  try {
+    const res = await fetch('api/upload-yt/' + id, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(meta)
+    });
+    const data = await res.json();
+    if (data.error) {
+      alert('Error: ' + data.error);
+      btn.disabled = false;
+      btn.textContent = '📤 Upload to YouTube';
+      return;
+    }
+    // Poll upload status
+    const statusKey = data.status_key;
+    const pollUpload = async () => {
+      try {
+        const sr = await fetch('api/upload-status/' + id);
+        const sd = await sr.json();
+        if (sd.status === 'done') {
+          btn.textContent = '✅ Uploaded!';
+          if (sd.video_url) {
+            alert('✅ Uploaded to YouTube!\\n\\nURL: ' + sd.video_url);
+            window.open(sd.video_url, '_blank');
+          } else {
+            alert('✅ Upload complete!\\n\\n' + (sd.output || '').slice(-200));
+          }
+        } else if (sd.status === 'error') {
+          btn.disabled = false;
+          btn.textContent = '📤 Upload to YouTube';
+          alert('❌ Upload failed: ' + (sd.error || '').slice(0, 300));
+        } else {
+          btn.textContent = '⏳ Uploading... (' + Math.floor((Date.now()/1000 - (sd.started||0))) + 's)';
+          setTimeout(pollUpload, 5000);
+        }
+      } catch(e) {
+        setTimeout(pollUpload, 5000);
+      }
+    };
+    setTimeout(pollUpload, 3000);
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = '📤 Upload to YouTube';
+    alert('Error: ' + e.message);
+  }
 }
 
 pollJobs();
 setInterval(pollJobs, 10000);
+
+// === Composio OAuth Status ===
+async function checkComposio() {
+  console.log('[composio] checking status...');
+  try {
+    const res = await fetch('api/composio/status', {cache: 'no-store'});
+    console.log('[composio] status response:', res.status);
+    const data = await res.json();
+    console.log('[composio] status data:', data);
+    const el = document.getElementById('composio-status');
+    if (!el) { console.error('[composio] element not found!'); return; }
+    if (data.needs_auth) {
+      el.innerHTML = '<button onclick="connectComposio()" style="padding:8px 20px;border-radius:8px;border:1px solid var(--accent);background:var(--card2);color:var(--text);cursor:pointer;font-size:13px;font-weight:600;">🔗 Connect YouTube (Composio)</button>';
+      console.log('[composio] button rendered');
+    } else {
+      el.innerHTML = '<span style="color:var(--green);font-weight:600;">✅ YouTube connected via Composio</span>';
+      console.log('[composio] connected status rendered');
+    }
+  } catch(e) {
+    console.error('[composio] error:', e);
+    const el = document.getElementById('composio-status');
+    if (el) el.innerHTML = '<span style="color:var(--accent);">⚠️ Could not check Composio status</span>';
+  }
+}
+async function connectComposio() {
+  try {
+    const res = await fetch('api/composio/auth-url', {cache: 'no-store'});
+    const data = await res.json();
+    if (data.error) { alert('Error: ' + data.error); return; }
+    window.open(data.auth_url, '_blank');
+    alert('After authorizing in the new tab, come back here. The page will refresh automatically.');
+    setTimeout(checkComposio, 5000);
+  } catch(e) { alert('Error: ' + e.message); }
+}
+// Run immediately and also after DOM is fully ready
+document.addEventListener('DOMContentLoaded', checkComposio);
+checkComposio();
+
+// ── Autonomous Tab ─────────────────────────────────────────────
+async function autoInit() {
+  await loadCompetitors();
+  await loadSchedule();
+  await loadHistory();
+  await loadAutoRuns();
+}
+async function loadCompetitors() {
+  try {
+    const res = await fetch('api/auto/competitors', {cache:'no-store'});
+    if (!res.ok) { document.getElementById('competitor-list').innerHTML = '<p style="color:var(--dim)">No research yet. Click "Research" first.</p>'; return; }
+    const data = await res.json();
+    const el = document.getElementById('competitor-list');
+    el.innerHTML = `<p style="color:var(--dim);margin-bottom:10px;">${data.total} viral history videos found</p>`;
+    data.videos.slice(0,10).forEach((v,i) => {
+      const faceless = v.is_faceless ? '👁️' : '👤';
+      el.innerHTML += `<div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);align-items:start;">
+        <span>${faceless}</span>
+        <div style="flex:1"><a href="${v.url}" target="_blank" style="color:var(--text);text-decoration:none">${v.title.substring(0,60)}</a>
+        <br><span style="color:var(--dim);font-size:12px">${(v.views/1e6).toFixed(1)}M views · ${v.channel||''}</span></div>
+      </div>`;
+    });
+  } catch(e) { console.error(e); }
+}
+async function runResearch() {
+  const btn = event.target;
+  btn.disabled = true; btn.textContent = '⏳ Researching...';
+  try {
+    const res = await fetch('api/auto/research', {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const data = await res.json();
+    pollAutoStatus(data.run_id, () => { loadCompetitors(); btn.disabled=false; btn.textContent='🔍 Research Now'; });
+  } catch(e) { alert('Error: '+e.message); btn.disabled=false; btn.textContent='🔍 Research Now'; }
+}
+async function generateIdea() {
+  const btn = event.target;
+  const topic = document.getElementById('auto-topic-input').value.trim();
+  btn.disabled = true; btn.textContent = '🧠 Thinking...';
+  try {
+    const body = topic ? JSON.stringify({topic}) : '{}';
+    const res = await fetch('api/auto/idea', {method:'POST',headers:{'Content-Type':'application/json'},body});
+    const data = await res.json();
+    pollAutoStatus(data.run_id, (run) => {
+      if (run.status === 'done' && run.result) {
+        const r = run.result;
+        document.getElementById('idea-result').innerHTML = `
+          <div style="padding:16px;background:var(--card2);border-radius:10px;border:1px solid var(--green)">
+            <h3 style="color:var(--green);margin-bottom:8px">${r.title||'Untitled'}</h3>
+            <p style="color:var(--dim);font-size:13px;margin-bottom:8px"><strong>Topic:</strong> ${r.topic||''}</p>
+            <p style="font-size:13px;margin-bottom:8px">${r.concept||''}</p>
+            <p style="color:var(--dim);font-size:12px;margin-bottom:8px"><strong>Why viral:</strong> ${r.angle||''}</p>
+            ${r.inspired_by && r.inspired_by.length ? '<p style="font-size:12px;color:var(--dim)">Inspired by:<br>' + r.inspired_by.map(s=>'• '+s.title.substring(0,50)+' ('+(s.views/1e6).toFixed(1)+'M)').join('<br>') + '</p>' : ''}
+            <button onclick="document.getElementById('auto-topic-input').value='${(r.topic||'').replace(/'/g,"\\'")}';generateAutoVideo()" style="margin-top:12px;padding:8px 20px;border-radius:8px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-weight:600">🎬 Generate Video</button>
+          </div>`;
+      } else {
+        document.getElementById('idea-result').innerHTML = '<p style="color:var(--accent)">❌ '+run.error+'</p>';
+      }
+      btn.disabled=false; btn.textContent='🧠 Generate Idea';
+    });
+  } catch(e) { alert('Error: '+e.message); btn.disabled=false; btn.textContent='🧠 Generate Idea'; }
+}
+async function generateAutoVideo() {
+  const topic = document.getElementById('auto-topic-input').value.trim();
+  if (!topic) { alert('Enter a topic first'); return; }
+  if (!confirm('Start autonomous video generation for:\\n'+topic+'\\n\\nThis will: generate script → create video → upload to YouTube.')) return;
+  const btn = event.target;
+  btn.disabled = true; btn.textContent = '⏳ Starting...';
+  try {
+    const res = await fetch('api/auto/run', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({topic,skip_research:true})});
+    const data = await res.json();
+    document.getElementById('auto-run-section').style.display = 'block';
+    pollAutoStatus(data.run_id, null, 'auto-run-progress');
+    btn.disabled=false; btn.textContent='🎬 Generate Video';
+  } catch(e) { alert('Error: '+e.message); btn.disabled=false; btn.textContent='🎬 Generate Video'; }
+}
+async function runFullAuto() {
+  if (!confirm('Start FULL autonomous run?\\n\\nThis will: research competitors → generate idea → create script → make video → upload to YouTube.\\n\\nThis takes ~15-20 minutes.')) return;
+  const btn = event.target;
+  btn.disabled = true; btn.textContent = '⏳ Running...';
+  try {
+    const res = await fetch('api/auto/run', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({skip_research:false})});
+    const data = await res.json();
+    document.getElementById('auto-run-section').style.display = 'block';
+    pollAutoStatus(data.run_id, null, 'auto-run-progress');
+    btn.disabled=false; btn.textContent='🚀 Full Auto Run';
+  } catch(e) { alert('Error: '+e.message); btn.disabled=false; btn.textContent='🚀 Full Auto Run'; }
+}
+function pollAutoStatus(runId, callback, progressEl) {
+  const interval = setInterval(async () => {
+    try {
+      const res = await fetch('api/auto/status/'+runId, {cache:'no-store'});
+      const run = await res.json();
+      if (progressEl) {
+        const el = document.getElementById(progressEl);
+        const pct = run.progress||0;
+        const step = run.step||'';
+        el.innerHTML = `<div style="margin:10px 0"><div style="background:var(--bg);border-radius:6px;height:24px;overflow:hidden"><div style="background:var(--accent);height:100%;width:${pct}%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600">${pct}%</div></div><p style="margin-top:8px;color:var(--dim);font-size:13px">Step: ${step}</p></div>`;
+        if (run.log && run.log.length) {
+          el.innerHTML += '<div style="max-height:200px;overflow-y:auto;font-size:12px;color:var(--dim);background:var(--bg);padding:10px;border-radius:8px;margin-top:8px">'+run.log.slice(-15).map(l=>'<div>'+l+'</div>').join('')+'</div>';
+        }
+        if (run.video_url) {
+          el.innerHTML += '<a href="'+run.video_url+'" target="_blank" style="color:var(--green);font-weight:600">✅ Watch on YouTube →</a>';
+        }
+      }
+      if (run.status === 'done' || run.status === 'error') {
+        clearInterval(interval);
+        if (callback) callback(run);
+        loadHistory(); loadAutoRuns();
+      }
+    } catch(e) { console.error(e); }
+  }, 3000);
+}
+async function loadSchedule() {
+  try {
+    const res = await fetch('api/auto/schedule', {cache:'no-store'});
+    if (!res.ok) return;
+    const data = await res.json();
+    const job = data.find(j => j.id === 'vox-tube-daily');
+    if (job) {
+      document.getElementById('schedule-enabled').checked = job.enabled;
+      document.getElementById('schedule-time').value = job.schedule;
+      document.getElementById('schedule-status').textContent = job.enabled ? '🟢 Active' : '🔴 Disabled';
+    }
+  } catch(e) {}
+}
+async function toggleSchedule() {
+  const enabled = document.getElementById('schedule-enabled').checked;
+  try {
+    await fetch('api/auto/schedule', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled})});
+    document.getElementById('schedule-status').textContent = enabled ? '🟢 Active' : '🔴 Disabled';
+  } catch(e) { alert('Error: '+e.message); }
+}
+async function loadHistory() {
+  try {
+    const res = await fetch('api/auto/history', {cache:'no-store'});
+    const data = await res.json();
+    const el = document.getElementById('auto-history');
+    if (!data.length) { el.innerHTML = '<p style="color:var(--dim)">No autonomous runs yet.</p>'; return; }
+    el.innerHTML = data.slice(-10).reverse().map(e => `
+      <div style="display:flex;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">
+        <div style="flex:1">
+          <a href="${e.video_url||'#'}" target="_blank" style="color:var(--text);text-decoration:none">${e.yt_title||e.title||e.topic||'Untitled'}</a>
+          <br><span style="color:var(--dim);font-size:12px">${e.status} · ${new Date(e.timestamp).toLocaleString()}</span>
+        </div>
+      </div>`).join('');
+  } catch(e) {}
+}
+async function loadAutoRuns() {
+  try {
+    const res = await fetch('api/auto/runs', {cache:'no-store'});
+    const data = await res.json();
+    // Just show active runs count
+    const active = data.filter(r => r.status === 'running');
+    if (active.length) { document.getElementById('auto-active-count').textContent = active.length + ' running'; }
+  } catch(e) {}
+}
+document.addEventListener('DOMContentLoaded', autoInit);
+autoInit();
 </script>
 </body>
 </html>"""
@@ -1162,6 +1452,24 @@ def api_generate_script():
     beat_count = (3 if duration <= 15 else 6 if duration <= 30 else 10 if duration <= 60
                   else 14 if duration <= 90 else 18 if duration <= 120 else 24 if duration <= 180 else 36)
 
+    # Theme-specific scene direction injected into the system prompt
+    theme_direction = ""
+    if theme == "stick-figure":
+        theme_direction = (
+            "\n\nSTICK-FIGURE STYLE DIRECTION:\n"
+            "- Every scene MUST feature 2D stick-figure characters as the main visual element.\n"
+            "- Describe the stick figures' ACTIONS and POSES: walking, running, pointing, "
+            "carrying objects, falling, jumping, thinking, building, fighting, celebrating.\n"
+            "- Scene descriptions should read like stage directions for stick-figure actors: "
+            "'a stick figure walks toward a giant clock and points at it' not just 'a person near a clock'.\n"
+            "- Keep characters as simple stick figures (line body, round head, no facial details) — "
+            "their body language tells the story.\n"
+            "- Props and scenery are simple flat geometric paper shapes (rectangles, circles, triangles).\n"
+            "- Mix with Vox collage elements: torn paper, halftone, bold flat backgrounds.\n"
+            "- element_motion should describe how the stick figures MOVE: 'stick figure runs and trips, "
+            "arms flailing; paper gears spin', not abstract element motion.\n"
+        )
+
     system_prompt = (
         "You are VOX DIRECTOR — an elite short-form documentary video scriptwriter. "
         "Produce a complete beats.json for a Vox-style paper-collage video.\n\n"
@@ -1190,6 +1498,7 @@ def api_generate_script():
         '"shot_size":"WIDE","camera_move":"push_in","scene":"...","element_motion":"..."},'
         '{"id":"b","dur":5,"title":false,"shot_size":"CLOSE","camera_move":"parallax",'
         '"scene":"...","element_motion":"..."}]}]}'
+        + theme_direction
     )
 
     user_prompt = (
@@ -1205,53 +1514,93 @@ def api_generate_script():
     )
 
     # --- Method 1: Agnes AI (same API used for video generation, free) ---
+    # Load Agnes API keys (multi-key rotation)
+    key_path = os.path.join(os.path.dirname(__file__), ".agnes_keys")
+    agnes_keys = []
+    with open(key_path) as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#"):
+                agnes_keys.append(line)
+    if not agnes_keys:
+        return jsonify({"error": "No Agnes API keys found (.agnes_keys)"}), 500
+
+    import random as _rng
+    url = "https://apihub.agnes-ai.com/v1/chat/completions"
+
+    # Retry up to 3 times with different keys (AI sometimes returns invalid JSON)
+    max_retries = 3
+    last_error = None
+    beats = None
+
+    for attempt in range(max_retries):
+        ai_key = _rng.choice(agnes_keys)
+        try:
+            payload = json.dumps({
+                "model": "agnes-2.5-flash",
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "max_tokens": 8000,
+                "temperature": 0.8
+            }).encode("utf-8")
+            req = urllib.request.Request(url, data=payload, headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {ai_key}"
+            }, method="POST")
+            print(f"[generate-script] Attempt {attempt+1}/{max_retries}: Calling Agnes AI (agnes-2.5-flash)...")
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                raw = resp.read().decode("utf-8").strip()
+
+            resp_data = json.loads(raw)
+            content = resp_data["choices"][0]["message"]["content"].strip()
+
+            if content.startswith("```"):
+                content = re.sub(r"^```(?:json)?\s*", "", content)
+                content = re.sub(r"\s*```$", "", content)
+
+            # Extract JSON: try direct parse first, then brace-matching fallback
+            try:
+                beats = json.loads(content)
+            except json.JSONDecodeError:
+                match = re.search(r"\{[\s\S]*\}", content)
+                if match:
+                    try:
+                        beats = json.loads(match[0])
+                    except json.JSONDecodeError:
+                        start = content.find("{")
+                        if start >= 0:
+                            depth = 0
+                            end = start
+                            for i in range(start, len(content)):
+                                if content[i] == "{":
+                                    depth += 1
+                                elif content[i] == "}":
+                                    depth -= 1
+                                    if depth == 0:
+                                        end = i + 1
+                                        break
+                            if depth == 0:
+                                beats = json.loads(content[start:end])
+                            else:
+                                raise
+                        else:
+                            raise
+
+            print(f"[generate-script] Agnes AI success! {len(beats.get('beats', []))} beats")
+            break  # Success — exit retry loop
+
+        except Exception as attempt_err:
+            print(f"[generate-script] Attempt {attempt+1} failed: {attempt_err}")
+            last_error = attempt_err
+            continue
+
+    if not beats:
+        print(f"[generate-script] All {max_retries} attempts failed.")
+        return jsonify({"error": f"AI script generation failed after {max_retries} attempts: {last_error}. Check Agnes API keys (.agnes_keys)."}), 502
+
     try:
-        # Load Agnes API keys (multi-key rotation)
-        key_path = os.path.join(os.path.dirname(__file__), ".agnes_keys")
-        agnes_keys = []
-        with open(key_path) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    agnes_keys.append(line)
-        if not agnes_keys:
-            raise Exception("No Agnes API keys found")
-
-        import random as _rng
-        ai_key = _rng.choice(agnes_keys)  # random key for load balancing
-
-        url = "https://apihub.agnes-ai.com/v1/chat/completions"
-        payload = json.dumps({
-            "model": "agnes-2.5-flash",
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            "max_tokens": 8000,
-            "temperature": 0.8
-        }).encode("utf-8")
-        req = urllib.request.Request(url, data=payload, headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {ai_key}"
-        }, method="POST")
-        print(f"[generate-script] Calling Agnes AI (agnes-2.5-flash)...")
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            raw = resp.read().decode("utf-8").strip()
-
-        resp_data = json.loads(raw)
-        content = resp_data["choices"][0]["message"]["content"].strip()
-
-        if content.startswith("```"):
-            content = re.sub(r"^```(?:json)?\s*", "", content)
-            content = re.sub(r"\s*```$", "", content)
-
-        match = re.search(r"\{[\s\S]*\}", content)
-        if match:
-            content = match[0]
-
-        beats = json.loads(content)
-        print(f"[generate-script] Agnes AI success! {len(beats.get('beats', []))} beats")
-
         # Ensure required fields
         beats["provider"] = "free"
         beats["aspect"] = aspect
@@ -1315,16 +1664,9 @@ def api_generate_script():
 
         return jsonify({"beats": beats, "source": "ai"})
 
-    except Exception as ai_err:
-        print(f"[generate-script] Agnes AI failed: {ai_err}, using template fallback")
-
-    # --- Method 2: Template-based generator (always works, no external API) ---
-    try:
-        beats = _generate_template_beats(topic, duration, aspect, theme, arc,
-                                         language, voice, extra_prompt, beat_count)
-        return jsonify({"beats": beats, "source": "template"})
-    except Exception as e:
-        return jsonify({"error": f"Script generation failed: {str(e)}"}), 500
+    except Exception as post_err:
+        print(f"[generate-script] Post-processing error: {post_err}")
+        return jsonify({"error": f"Script post-processing failed: {str(post_err)}"}), 500
 
 
 def _generate_template_beats(topic, duration, aspect, theme, arc, language, voice, extra_prompt, beat_count):
@@ -1592,6 +1934,11 @@ def api_video(job_id):
 
 @app.route("/api/upload-yt/<job_id>", methods=["POST"])
 def api_upload_yt(job_id):
+    """Upload finished video to YouTube via Composio API.
+
+    Requires COMPOSIO_API_KEY env var (or .composio_key file) and an active
+    YouTube connected account on Composio dashboard.
+    """
     if job_id not in jobs or not jobs[job_id].get("result_video"):
         return jsonify({"error": "Video not found"}), 404
 
@@ -1599,30 +1946,673 @@ def api_upload_yt(job_id):
     yt_title = data.get("title", "")
     yt_description = data.get("description", "")
     yt_tags = data.get("tags", [])
+    privacy = data.get("privacy", "public")
 
     video_path = Path(jobs[job_id]["result_video"])
-    yt_uploads = Path("/opt/baal-agent/workspace/yt-uploader/uploads")
-    yt_uploads.mkdir(parents=True, exist_ok=True)
-    dest = yt_uploads / video_path.name
-    shutil.copy2(video_path, dest)
 
-    # Also copy thumbnails if they exist
+    # Get metadata from beats.json if not provided
     project_dir = Path(jobs[job_id]["project_dir"])
-    for thumb in project_dir.glob("thumb_*.jpg"):
-        shutil.copy2(thumb, yt_uploads / thumb.name)
+    beats_path = project_dir / "beats.json"
+    if beats_path.exists():
+        beats_doc = json.loads(beats_path.read_text())
+        topic = jobs[job_id].get("topic", "Untitled")
+        theme = beats_doc.get("theme", "vox")
+        if not yt_title:
+            yt_title = f"{topic} | {theme.upper()} Animation"
+        if not yt_description:
+            desc_lines = [topic, "", f"Style: {theme} animation collage", "", "Generated by Vox Director Studio"]
+            yt_description = "\n".join(desc_lines)
+        if not yt_tags:
+            yt_tags = [theme, "animation", "short", "educational"] + topic.lower().split()[:3]
 
-    # Write metadata JSON alongside video (YT uploader can auto-load this)
-    meta_path = yt_uploads / (video_path.stem + "_meta.json")
-    meta = {
-        "title": yt_title or jobs[job_id].get("topic", "Untitled"),
-        "description": yt_description,
-        "tags": yt_tags,
-        "video_file": video_path.name,
+    # Upload via Composio in a background thread (upload takes 1-3 min)
+    upload_status_key = f"upload_{job_id}"
+    jobs[upload_status_key] = {"status": "uploading", "started": time.time()}
+
+    def do_upload():
+        try:
+            import subprocess as sp
+            cmd = [
+                sys.executable,
+                str(SCRIPTS / "youtube.py"),
+                str(project_dir),
+                "--title", yt_title,
+                "--description", yt_description,
+                "--tags", ",".join(yt_tags),
+                "--privacy", privacy,
+                "--video", str(video_path),
+            ]
+            env = os.environ.copy()
+            # Ensure COMPOSIO_API_KEY is set
+            env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+            result = sp.run(cmd, capture_output=True, text=True, timeout=300, env=env)
+            if result.returncode == 0:
+                # Parse video URL from output
+                video_url = ""
+                for line in result.stdout.split("\n"):
+                    if "watch?v=" in line:
+                        video_url = line.strip().split("URL: ")[-1]
+                        break
+                jobs[upload_status_key] = {
+                    "status": "done",
+                    "video_url": video_url,
+                    "output": result.stdout[-500:],
+                }
+            else:
+                jobs[upload_status_key] = {
+                    "status": "error",
+                    "error": result.stderr[-500:] or result.stdout[-500:],
+                }
+        except Exception as e:
+            jobs[upload_status_key] = {"status": "error", "error": str(e)}
+
+    threading.Thread(target=do_upload, daemon=True).start()
+
+    return jsonify({"ok": True, "message": "Upload started", "status_key": upload_status_key})
+
+
+@app.route("/api/upload-status/<job_id>")
+def api_upload_status(job_id):
+    """Check YouTube upload progress."""
+    upload_status_key = f"upload_{job_id}"
+    if upload_status_key in jobs:
+        return jsonify(jobs[upload_status_key])
+    return jsonify({"status": "idle"})
+
+
+# ============================================================
+# COMPOSIO OAUTH FLOW
+# ============================================================
+
+COMPOSIO_CONSUMER_KEY = ""
+COMPOSIO_OAUTH_CLIENT_ID = ""
+
+def load_composio_keys():
+    """Load Composio consumer key and OAuth client ID from files."""
+    global COMPOSIO_CONSUMER_KEY, COMPOSIO_OAUTH_CLIENT_ID
+    key_file = Path("/opt/baal-agent/workspace/vox-director/.composio_key")
+    client_file = Path("/opt/baal-agent/workspace/vox-director/.composio_client_id")
+    if key_file.exists():
+        COMPOSIO_CONSUMER_KEY = key_file.read_text().strip()
+    if client_file.exists():
+        COMPOSIO_OAUTH_CLIENT_ID = client_file.read_text().strip()
+
+load_composio_keys()
+
+# Store JWT tokens
+composio_tokens = {}
+
+# Store PKCE code verifiers (in-memory, keyed by state)
+_pkce_verifiers = {}
+
+
+def _generate_pkce():
+    """Generate PKCE code_verifier and code_challenge (S256)."""
+    import secrets as _secrets
+    import hashlib
+    import base64
+
+    # Generate random code_verifier (43-128 chars, base64url-safe)
+    verifier = base64.urlsafe_b64encode(_secrets.token_bytes(32)).decode("ascii").rstrip("=")
+    # code_challenge = base64url(SHA256(verifier))
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode("ascii")).digest()
+    ).decode("ascii").rstrip("=")
+    return verifier, challenge
+
+
+@app.route("/api/composio/auth-url")
+def api_composio_auth_url():
+    """Generate OAuth authorization URL for Composio MCP with PKCE."""
+    load_composio_keys()
+    if not COMPOSIO_OAUTH_CLIENT_ID:
+        return jsonify({"error": "OAuth client ID not configured"}), 500
+
+    import secrets as _secrets
+    import urllib.parse
+
+    redirect_uri = "https://chimney-copper-marriage-salute.2n6.me/vox/oauth/callback"
+
+    # Generate PKCE pair
+    verifier, challenge = _generate_pkce()
+    state = _secrets.token_urlsafe(16)
+    _pkce_verifiers[state] = verifier
+
+    params = {
+        "client_id": COMPOSIO_OAUTH_CLIENT_ID,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid profile email offline_access",
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "state": state,
     }
-    with open(meta_path, "w") as f:
-        json.dump(meta, f, indent=2)
 
-    return jsonify({"ok": True, "message": f"Copied to {dest}", "meta_file": str(meta_path)})
+    auth_url = f"https://login.composio.dev/oauth2/authorize?{urllib.parse.urlencode(params)}"
+    return jsonify({"auth_url": auth_url})
+
+
+@app.route("/oauth/callback")
+def oauth_callback():
+    """Handle OAuth callback from Composio (OAuth 2.1 with PKCE)."""
+    code = request.args.get("code", "")
+    error = request.args.get("error", "")
+    state = request.args.get("state", "")
+
+    if error:
+        return f"<h2>❌ Authorization failed</h2><p>{error}</p>"
+
+    if not code:
+        return "<h2>❌ No authorization code received</h2>", 400
+
+    # Retrieve PKCE verifier for this state
+    verifier = _pkce_verifiers.pop(state, "")
+    if not verifier:
+        return "<h2>❌ Session expired</h2><p>Please try connecting again.</p>", 400
+
+    import httpx
+    redirect_uri = "https://chimney-copper-marriage-salute.2n6.me/vox/oauth/callback"
+
+    try:
+        r = httpx.post(
+            "https://login.composio.dev/oauth2/token",
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+                "client_id": COMPOSIO_OAUTH_CLIENT_ID,
+                "code_verifier": verifier,
+            },
+            timeout=30,
+        )
+        if r.status_code != 200:
+            return f"<h2>❌ Token exchange failed</h2><pre>{r.text}</pre>", 500
+
+        token_data = r.json()
+        access_token = token_data.get("access_token", "")
+        refresh_token = token_data.get("refresh_token", "")
+
+        composio_tokens["access_token"] = access_token
+
+        token_file = Path("/opt/baal-agent/workspace/vox-director/.composio_token")
+        token_file.write_text(access_token)
+        token_file.chmod(0o600)
+        if refresh_token:
+            rf = Path("/opt/baal-agent/workspace/vox-director/.composio_refresh")
+            rf.write_text(refresh_token)
+            rf.chmod(0o600)
+
+        return """<h2>✅ Authorized!</h2>
+        <p>Composio MCP access token saved. You can now upload videos to YouTube.</p>
+        <p><a href="/vox/">← Back to Vox Studio</a></p>"""
+
+    except Exception as e:
+        return f"<h2>❌ Error</h2><pre>{e}</pre>", 500
+
+
+@app.route("/api/composio/status")
+def api_composio_status():
+    """Check if Composio is authenticated."""
+    load_composio_keys()
+    token_file = Path("/opt/baal-agent/workspace/vox-director/.composio_token")
+    has_token = token_file.exists() or "access_token" in composio_tokens
+    return jsonify({
+        "has_consumer_key": bool(COMPOSIO_CONSUMER_KEY),
+        "has_token": has_token,
+        "needs_auth": not has_token,
+    })
+
+
+def get_composio_jwt():
+    """Get the saved JWT token for Composio MCP."""
+    if "access_token" in composio_tokens:
+        return composio_tokens["access_token"]
+    token_file = Path("/opt/baal-agent/workspace/vox-director/.composio_token")
+    if token_file.exists():
+        return token_file.read_text().strip()
+    return None
+
+
+# ── Autonomous Vox Tube API ──────────────────────────────────────────────────
+
+# Track autonomous runs
+autonomous_runs = {}
+autonomous_counter = 0
+auto_lock = threading.Lock()
+
+AUTO_LOG = VOX / "out" / "autonomous_log.jsonl"
+
+
+@app.route("/api/auto/research", methods=["POST"])
+def api_auto_research():
+    """Run competitor research — scrape YouTube for viral history videos."""
+    def run_research(run_id):
+        run = autonomous_runs[run_id]
+        run["log"].append("🔍 Searching YouTube for viral history videos...")
+        try:
+            sys.path.insert(0, str(SCRIPTS))
+            from competitor_watcher import find_viral_history_videos, save_results
+            videos = find_viral_history_videos()
+            save_results(videos, OUT / "competitor_research.json")
+            run["status"] = "done"
+            run["result"] = {"videos_found": len(videos), "top_5": [
+                {"title": v["title"], "views": v["views"], "url": v["url"]}
+                for v in videos[:5]
+            ]}
+            run["log"].append(f"✅ Found {len(videos)} viral history videos")
+        except Exception as e:
+            run["status"] = "error"
+            run["error"] = str(e)
+            run["log"].append(f"❌ Error: {e}")
+
+    global autonomous_counter
+    with auto_lock:
+        run_id = f"research_{autonomous_counter}"
+        autonomous_counter += 1
+        autonomous_runs[run_id] = {
+            "id": run_id,
+            "type": "research",
+            "status": "running",
+            "log": [],
+            "result": None,
+            "error": None,
+            "created_at": time.time(),
+        }
+
+    thread = threading.Thread(target=run_research, args=(run_id,), daemon=True)
+    thread.start()
+    return jsonify({"run_id": run_id, "status": "started"})
+
+
+@app.route("/api/auto/idea", methods=["POST"])
+def api_auto_idea():
+    """Generate a unique video idea from competitor research."""
+    data = request.json or {}
+    topic_override = data.get("topic")
+
+    def run_idea(run_id, topic_override):
+        run = autonomous_runs[run_id]
+        try:
+            sys.path.insert(0, str(SCRIPTS))
+            research_path = OUT / "competitor_research.json"
+            if not research_path.exists():
+                run["status"] = "error"
+                run["error"] = "No competitor research found. Run research first."
+                run["log"].append("❌ No competitor research found.")
+                return
+
+            videos = json.loads(research_path.read_text())
+            run["log"].append(f"📂 Loaded {len(videos)} competitor videos")
+
+            from idea_engine import generate_idea
+            run["log"].append("🧠 Generating unique idea with AI...")
+            idea = generate_idea(videos, niche="history") if not topic_override else {
+                "topic": topic_override,
+                "title": topic_override.title(),
+                "concept": f"Exploring {topic_override}",
+                "angle": "User-specified topic",
+                "inspired_by": [],
+            }
+
+            if idea:
+                run["status"] = "done"
+                run["result"] = idea
+                run["log"].append(f"✅ Idea: {idea.get('title', '?')}")
+            else:
+                run["status"] = "error"
+                run["error"] = "Idea generation failed"
+                run["log"].append("❌ Idea generation failed")
+        except Exception as e:
+            run["status"] = "error"
+            run["error"] = str(e)
+            run["log"].append(f"❌ Error: {e}")
+
+    global autonomous_counter
+    with auto_lock:
+        run_id = f"idea_{autonomous_counter}"
+        autonomous_counter += 1
+        autonomous_runs[run_id] = {
+            "id": run_id,
+            "type": "idea",
+            "status": "running",
+            "log": [],
+            "result": None,
+            "error": None,
+            "created_at": time.time(),
+        }
+
+    thread = threading.Thread(target=run_idea, args=(run_id, topic_override), daemon=True)
+    thread.start()
+    return jsonify({"run_id": run_id, "status": "started"})
+
+
+@app.route("/api/auto/run", methods=["POST"])
+def api_auto_run():
+    """Run the full autonomous pipeline: research → idea → script → video → upload."""
+    data = request.json or {}
+    topic_override = data.get("topic")
+    skip_research = data.get("skip_research", True)
+
+    def run_full_pipeline(run_id, topic_override, skip_research):
+        run = autonomous_runs[run_id]
+
+        def log(msg):
+            ts = datetime.now().strftime('%H:%M:%S')
+            run["log"].append(f"[{ts}] {msg}")
+            if len(run["log"]) > 200:
+                run["log"] = run["log"][-150:]
+
+        try:
+            sys.path.insert(0, str(SCRIPTS))
+
+            # Step 1: Research
+            if not skip_research:
+                log("🔍 Step 1: Competitor research...")
+                from competitor_watcher import find_viral_history_videos, save_results
+                videos = find_viral_history_videos()
+                save_results(videos, OUT / "competitor_research.json")
+                log(f"   Found {len(videos)} viral videos")
+            else:
+                research_path = OUT / "competitor_research.json"
+                if research_path.exists():
+                    videos = json.loads(research_path.read_text())
+                    log(f"📂 Using cached research ({len(videos)} videos)")
+                else:
+                    log("🔍 No cache — running research...")
+                    from competitor_watcher import find_viral_history_videos, save_results
+                    videos = find_viral_history_videos()
+                    save_results(videos, OUT / "competitor_research.json")
+
+            run["step"] = "idea"
+            run["progress"] = 10
+
+            # Step 2: Idea
+            log("🧠 Step 2: Generating unique idea...")
+            from idea_engine import generate_idea
+            if topic_override:
+                idea = {
+                    "topic": topic_override,
+                    "title": topic_override.title(),
+                    "concept": f"Exploring {topic_override}",
+                    "angle": "User-specified topic",
+                    "inspired_by": [],
+                }
+            else:
+                idea = generate_idea(videos, niche="history")
+
+            if not idea:
+                run["status"] = "error"
+                run["error"] = "Idea generation failed"
+                log("❌ Idea generation failed!")
+                return
+
+            log(f"   Idea: {idea.get('title', '?')}")
+            run["idea"] = idea
+            run["progress"] = 20
+
+            # Step 3: Generate script
+            run["step"] = "script"
+            log("📝 Step 3: Generating script via Agnes AI...")
+
+            import urllib.request
+            payload = json.dumps({
+                "topic": idea["topic"],
+                "duration": 45,
+                "aspect": "16:9",
+                "theme": "newsprint-editorial",
+                "arc": "hook_payoff",
+                "language": "en",
+                "voice": "leo",
+                "prompt": idea.get("concept", ""),
+            }).encode("utf-8")
+
+            req = urllib.request.Request(
+                f"http://localhost:9200/api/generate-script",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                script_data = json.loads(resp.read().decode("utf-8"))
+
+            if "error" in script_data:
+                run["status"] = "error"
+                run["error"] = script_data["error"]
+                log(f"❌ Script failed: {script_data['error']}")
+                return
+
+            beats = script_data["beats"]
+            log(f"   Script: {len(beats.get('beats', []))} beats")
+            run["progress"] = 30
+
+            # Step 4: Create video
+            run["step"] = "pipeline"
+            log("🎬 Step 4: Starting video pipeline...")
+
+            payload2 = json.dumps({"beats": beats}).encode("utf-8")
+            req2 = urllib.request.Request(
+                f"http://localhost:9200/api/create",
+                data=payload2,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req2, timeout=30) as resp2:
+                job_data = json.loads(resp2.read().decode("utf-8"))
+
+            job_id = job_data.get("job_id")
+            if not job_id:
+                run["status"] = "error"
+                run["error"] = "Failed to create video job"
+                log("❌ Failed to create video job")
+                return
+
+            run["vox_job_id"] = job_id
+            log(f"   Pipeline job: {job_id}")
+
+            # Step 5: Wait for video
+            run["step"] = "video"
+            start = time.time()
+            last_status = ""
+            while time.time() - start < 2400:  # 40 min timeout (10 beats takes ~20 min)
+                req3 = urllib.request.Request(f"http://localhost:9200/api/jobs")
+                with urllib.request.urlopen(req3, timeout=10) as resp3:
+                    jobs_data = json.loads(resp3.read().decode("utf-8"))
+
+                job = next((j for j in jobs_data if j["id"] == job_id), None)
+                if not job:
+                    run["status"] = "error"
+                    run["error"] = "Job not found"
+                    log("❌ Job not found")
+                    return
+
+                status = job.get("status", "?")
+                progress = job.get("progress", 0)
+                # Map to overall progress (30% → 90%)
+                run["progress"] = 30 + int(progress * 0.6)
+
+                if status != last_status:
+                    log(f"   {status} ({progress}%) — {job.get('step_label', '')}")
+                    last_status = status
+
+                if status == "done":
+                    log(f"✅ Video complete!")
+                    run["result_video"] = job.get("result_video")
+                    break
+                elif status in ("failed", "cancelled"):
+                    run["status"] = "error"
+                    run["error"] = job.get("error", status)
+                    log(f"❌ Pipeline {status}: {job.get('error', '')}")
+                    return
+
+                time.sleep(10)
+
+            else:
+                run["status"] = "error"
+                run["error"] = "Pipeline timed out"
+                log("⏰ Pipeline timed out")
+                return
+
+            run["progress"] = 90
+
+            # Step 6: Upload to YouTube
+            run["step"] = "upload"
+            log("📤 Step 6: Uploading to YouTube...")
+
+            yt_title = beats.get("yt_title", idea.get("title", "Untitled"))
+            yt_desc = beats.get("yt_description", idea.get("concept", ""))
+            yt_tags = beats.get("yt_tags", ["history", "documentary", "short"])
+
+            upload_payload = json.dumps({
+                "title": yt_title,
+                "description": yt_desc,
+                "tags": yt_tags,
+            }).encode("utf-8")
+            req4 = urllib.request.Request(
+                f"http://localhost:9200/api/upload-yt/{job_id}",
+                data=upload_payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req4, timeout=30) as resp4:
+                upload_data = json.loads(resp4.read().decode("utf-8"))
+            log(f"   Upload started: {upload_data}")
+
+            # Wait for upload
+            upload_start = time.time()
+            while time.time() - upload_start < 300:
+                req5 = urllib.request.Request(f"http://localhost:9200/api/upload-status/{job_id}")
+                with urllib.request.urlopen(req5, timeout=10) as resp5:
+                    up_status = json.loads(resp5.read().decode("utf-8"))
+
+                if up_status.get("status") == "done":
+                    video_url = up_status.get("video_url", "")
+                    log(f"✅ Uploaded to YouTube! {video_url}")
+                    run["video_url"] = video_url
+                    run["status"] = "done"
+                    run["progress"] = 100
+                    # Save to autonomous log
+                    entry = {
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "topic": idea.get("topic"),
+                        "title": idea.get("title"),
+                        "yt_title": yt_title,
+                        "job_id": job_id,
+                        "video_url": video_url,
+                        "inspired_by": idea.get("inspired_by", []),
+                        "status": "uploaded",
+                    }
+                    with open(AUTO_LOG, "a") as f:
+                        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                    return
+                elif up_status.get("status") == "error":
+                    run["status"] = "error"
+                    run["error"] = up_status.get("error", "upload failed")
+                    log(f"❌ Upload failed: {up_status.get('error', '')}")
+                    return
+
+                time.sleep(5)
+            else:
+                run["status"] = "error"
+                run["error"] = "Upload timed out"
+                log("⏰ Upload timed out")
+
+        except Exception as e:
+            run["status"] = "error"
+            run["error"] = str(e)
+            log(f"❌ Error: {e}")
+
+    global autonomous_counter
+    with auto_lock:
+        run_id = f"auto_{autonomous_counter}"
+        autonomous_counter += 1
+        autonomous_runs[run_id] = {
+            "id": run_id,
+            "type": "full",
+            "status": "running",
+            "step": "starting",
+            "progress": 0,
+            "log": [],
+            "result": None,
+            "error": None,
+            "idea": None,
+            "vox_job_id": None,
+            "result_video": None,
+            "video_url": None,
+            "created_at": time.time(),
+        }
+
+    thread = threading.Thread(target=run_full_pipeline, args=(run_id, topic_override, skip_research), daemon=True)
+    thread.start()
+    return jsonify({"run_id": run_id, "status": "started"})
+
+
+@app.route("/api/auto/status/<run_id>")
+def api_auto_status(run_id):
+    """Get status of an autonomous run."""
+    run = autonomous_runs.get(run_id)
+    if not run:
+        return jsonify({"error": "Run not found"}), 404
+    return jsonify(run)
+
+
+@app.route("/api/auto/runs")
+def api_auto_runs():
+    """List all autonomous runs."""
+    with auto_lock:
+        return jsonify(list(autonomous_runs.values()))
+
+
+@app.route("/api/auto/history")
+def api_auto_history():
+    """Get autonomous run history from log file."""
+    if not AUTO_LOG.exists():
+        return jsonify([])
+    entries = []
+    for line in AUTO_LOG.read_text().strip().split("\n"):
+        if line:
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return jsonify(entries)
+
+
+@app.route("/api/auto/competitors")
+def api_auto_competitors():
+    """Get cached competitor research data."""
+    research_path = OUT / "competitor_research.json"
+    if not research_path.exists():
+        return jsonify({"error": "No research data. Run research first."}), 404
+    videos = json.loads(research_path.read_text())
+    return jsonify({
+        "total": len(videos),
+        "videos": videos[:20],  # top 20
+    })
+
+
+@app.route("/api/auto/schedule", methods=["GET", "POST"])
+def api_auto_schedule():
+    """Get or update the autonomous schedule (cron.json)."""
+    cron_path = Path("/opt/baal-agent/workspace/cron.json")
+    if request.method == "GET":
+        if not cron_path.exists():
+            return jsonify({"error": "No schedule configured"}), 404
+        return jsonify(json.loads(cron_path.read_text()))
+    else:
+        data = request.json or {}
+        enabled = data.get("enabled")
+        schedule = data.get("schedule")
+
+        cron_data = json.loads(cron_path.read_text()) if cron_path.exists() else []
+        for job in cron_data:
+            if job.get("id") == "vox-tube-daily":
+                if enabled is not None:
+                    job["enabled"] = enabled
+                if schedule:
+                    job["schedule"] = schedule
+        with open(cron_path, "w") as f:
+            json.dump(cron_data, f, indent=2)
+        return jsonify({"status": "updated", "cron": cron_data})
 
 
 if __name__ == "__main__":
