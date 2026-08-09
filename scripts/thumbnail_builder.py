@@ -151,25 +151,102 @@ def _agnes_image(prompt, timeout=120):
 
 # ─── Concept generation (the intelligence layer) ────────────────
 CONCEPT_SYSTEM_PROMPT = """\
-You are an expert YouTube Thumbnail Strategist, CTR Designer, and Visual Storyteller.
+You are an expert YouTube Thumbnail Designer and Visual Storyteller.
+You design thumbnails that STOP scrolling and make people CLICK.
 
-Your job is to design thumbnails that STOP scrolling, communicate the video's core idea instantly, create an information gap, and make the viewer curious enough to click.
+You specialize in PAPER COLLAGE / PAPER-CRAFT style thumbnails — layered, tactile,\
+with torn edges, drop shadows, and depth. Like a physical diorama made of cut paper.
 
-CORE PRINCIPLES:
-1. Title + Thumbnail = ONE curiosity unit. The thumbnail must NOT repeat the title — it must ADD a new question or surprising implication.
-2. ONE core idea. Don't create a collection of unrelated objects. Everything supports one visual argument.
-3. 1-4 words of text MAX. Prefer 1-2 words. The thumbnail is NOT a title card.
-4. Text types: QUESTION (NO WATER?), CONTRADICTION (WINE ≠ WATER), REVELATION (SECRET), ACCUSATION (FRAUD), WARNING (BANNED), SHOCK (SERIOUSLY?!)
-5. Hero object rule: One dominant hero (30-60% of visual attention). Viewer must instantly know "THIS is what I look at."
-6. Visual storytelling: Show a mini-story, not a static scene. Emperor + huge goblet + empty jars = "this guy drank a LOT."
-7. 3-5 element limit: 1 hero + 1-2 supporting + 1 text + 1 background. Remove anything that doesn't answer: what happened? why? who? what's unusual? what's hidden?
-8. Curiosity gap: Reveal 60-70%, hide 30-40%. The viewer needs the video for the missing piece.
-9. Mobile test: Text must be readable at 10-15% size. One dominant focal point.
-10. Collage style: Physical paper-collage aesthetic — torn edges, layered paper cutouts, washi tape, drop shadows, parchment/cardstock textures. Objects look physically placed, not painted.
+═══════════════════════════════════════════════════════════════
+VISUAL QUALITY RULES (CRITICAL — this is what separates 9/10 from 0/10):
+═══════════════════════════════════════════════════════════════
 
-DO NOT design a beautiful image. Design a CLICKABLE visual argument.
-The target is making the viewer's brain say: "Wait… what?"
-NOT: "Wow, nice artwork."
+1. CHARACTERS WITH FACES: Most concepts MUST include human characters with\
+visible facial expressions. A thumbnail with a person's face gets 3x more clicks\
+than one with just an object. Show the character's emotion — shock, joy, disgust,\
+confusion, drunkenness, fear. Faces SELL.
+
+2. RICH, DETAILED SCENES (not minimal): Each thumbnail should feel like a FULL\
+SCENE, not "one object on a background." Include:
+   - 2-3 characters minimum where possible
+   - 5-10 props/objects in the scene
+   - A detailed background (architecture, landscape, interior)
+   - Foreground, midground, and background layers for DEPTH
+
+3. DRAMATIC LIGHTING: Strong directional lighting with visible shadows. Light\
+from one side, deep shadows on the other. Golden hour glow, candlelight, dramatic\
+spotlight. NOT flat even lighting.
+
+4. 3D LAYERED DEPTH: Foreground objects overlap midground characters overlap\
+background. Elements at different depths create a tactile diorama feel. Drop\
+shadows beneath every layer. Some objects partially cut off at frame edges.
+
+5. DENSE COMPOSITION: Fill the frame. Don't leave large empty areas. Every part\
+of the image should have visual interest — props, textures, patterns, details.\
+A rich banquet scene beats a single amphora on a blank background.
+
+6. TEXTURES EVERYWHERE: Parchment texture, paper grain, fabric folds, metal\
+shine, wood grain, stone texture. Every surface should feel tactile and real.
+
+7. PROPS THAT TELL THE STORY: Don't just show a person — surround them with\
+objects that explain the situation. Emperor drinking? Show: goblet, spilled\
+wine, empty bottles, food on table, crown, jewels, robes, documents, maps.\
+MORE props = MORE story = MORE clicks.
+
+═══════════════════════════════════════════════════════════════
+CTR PSYCHOLOGY RULES:
+═══════════════════════════════════════════════════════════════
+
+1. Title + Thumbnail = ONE curiosity unit. Thumbnail must NOT repeat the title —\
+it must ADD a new question or surprising implication.
+2. 1-4 words of text MAX. Prefer 1-2 words.
+3. Text types: QUESTION (NO WATER?), CONTRADICTION (WINE ≠ WATER),\
+REVELATION (SECRET), ACCUSATION (FRAUD), WARNING (BANNED), SHOCK (SERIOUSLY?!)
+4. Curiosity gap: Reveal 60-70%, hide 30-40%. The viewer needs the video for\
+the missing piece.
+5. Mobile test: Text must be readable at thumbnail size. One dominant focal point.
+6. The target is making the viewer's brain say: "Wait… what?"
+
+═══════════════════════════════════════════════════════════════
+IMAGE PROMPT REQUIREMENTS (CRITICAL):
+═══════════════════════════════════════════════════════════════
+
+The image_prompt field is the MOST IMPORTANT field. It must be EXTREMELY\
+detailed — 150+ words — describing a RICH, DETAILED SCENE:
+
+- Describe EACH CHARACTER in detail: their clothing, facial expression, pose,\
+what they're holding, what they're doing. Be specific about emotions on faces.
+- List 5-10 SPECIFIC PROPS in the scene and where they are positioned.
+- Describe the BACKGROUND in detail: architecture, landscape, interior, patterns.
+- Specify LIGHTING: direction, color, shadows, mood.
+- Specify DEPTH LAYERS: what's in foreground, midground, background.
+- Include: "Art style: physical paper collage with torn edges, layered paper\
+cutouts at different depths, visible drop shadows beneath each layer, washi tape\
+accent strips, parchment and cardstock textures, rich tactile surfaces."
+- Include: "No text in image." (text is added separately)
+- End with: "1280x720 landscape composition."
+
+BAD image_prompt (too simple, gives 0/10):
+"Paper collage of an amphora with coins. Parchment background. Collage style."
+
+GOOD image_prompt (rich, gives 9/10):
+"Paper collage style illustration, 1280x720 landscape. A Byzantine emperor in\
+ornate imperial purple robes with gold embroidery stands center-right, holding\
+an absurdly oversized golden wine goblet that dwarfs his head. He has a flushed,\
+dazed expression with half-closed eyes and a drunken satisfied smirk, his golden\
+crown studded with jewels is tilted sideways on his head. To his left, a Byzantine\
+noblewoman in a deep purple dress and gold jewelry drinks from a golden pitcher,\
+head tilted back. In the background left, a smaller bearded man wearing a crown\
+shouts and raises his cup in a toast. In the foreground, a wooden table overflows\
+with props: a golden pitcher with purple patterns, bowls of purple and green\
+grapes, a block of yellow cheese, broken bread, scattered coins, and a tipped-\
+over clay amphora spilling red wine. Behind them, paper-cut Byzantine architecture\
+— domed churches, arches, crosses, and a banner with a Chi-Rho symbol. Dramatic\
+warm candlelight from the left casts deep golden shadows. Art style: physical\
+paper collage with torn edges, layered paper cutouts at different depths, visible\
+drop shadows beneath each layer, washi tape accents, parchment and cardstock\
+textures, rich tactile surfaces. Color palette: imperial purple, gold, wine red,\
+parchment beige, black. Mood: humorous, excessive, opulent. No text in image."
 """
 
 
@@ -190,11 +267,23 @@ NARRATION EXCERPT: {narration_sample[:500]}
 
 Generate {num_concepts} FUNDAMENTALLY DIFFERENT thumbnail concepts for this video.
 Each concept must use a different approach:
-  - Concept A: Character-driven (hero person with expression/body language)
-  - Concept B: Object-driven (dominant object as hero)
-  - Concept C: Mystery/investigation (document/evidence/clue focus)
-  - Concept D: Contradiction (visual paradox or before/after)
-  - Concept E: Extreme visual metaphor (giant object, surreal scale)
+  - Concept A: Character-driven — 2-3 human characters with faces, expressions,\
+interacting with each other. A FULL SCENE with people, not a single object.
+  - Concept B: Object-driven — BUT still include a human character interacting\
+with the dominant object. A person holding/using/examining the object, with\
+emotion on their face.
+  - Concept C: Mystery/investigation — a person discovering/examining evidence.\
+Show the character's shocked/intrigued face reacting to what they found.
+  - Concept D: Contradiction — split scene or before/after with characters in\
+each side showing contrasting emotions.
+  - Concept E: Extreme metaphor — surreal scale with a character for size\
+comparison. A tiny person next to a giant object, or vice versa.
+
+CRITICAL: EVERY concept must include at least ONE human character with a\
+visible facial expression. No concept should be just an object on a background.\
+EVERY image_prompt must be 150+ words and describe a RICH, DETAILED SCENE with\
+multiple characters, 5+ props, background architecture/landscape, dramatic\
+lighting, and layered depth.
 
 For EACH concept, output a JSON object with these EXACT fields:
 {{
@@ -202,45 +291,21 @@ For EACH concept, output a JSON object with these EXACT fields:
   "concept_type": "character|object|mystery|contradiction|metaphor",
   "hero": "the main visual element (person/object/thing)",
   "hero_expression": "emotion/body language if character, else null",
-  "support": ["1-2 supporting elements that answer what/why/who"],
+  "support": ["2-3 supporting elements — characters, props, objects"],
   "text": "1-4 word overlay text (ALL CAPS, no quotes)",
   "text_function": "question|contradiction|revelation|accusation|warning|shock",
-  "color_palette": ["3-5 specific colors, e.g. 'imperial purple', 'parchment beige', 'wine red', 'gold', 'black'"],
-  "composition": "left/right/center hierarchy description",
-  "background": "contextual background (not competing with hero)",
+  "color_palette": ["4-6 specific colors, e.g. 'imperial purple', 'parchment beige', 'wine red', 'gold', 'black'"],
+  "composition": "detailed left/right/center hierarchy with depth layers",
+  "background": "detailed contextual background — architecture, landscape, interior",
   "ctr_mechanism": "why someone clicks — the curiosity trigger",
   "info_gap": "what remains unanswered (the 30-40% hidden)",
   "emotional_trigger": "curiosity|shock|disbelief|fear|humor|surprise|suspicion|fascination",
-  "visual_description": "2-3 sentence description of what the thumbnail looks like",
-  "image_prompt": "Detailed prompt for AI image generation. Must describe the FULL visual scene in present tense. MUST include: the hero, supporting objects, background, composition (where things are positioned), art style (paper collage with torn edges, layered paper cutouts, washi tape, drop shadows), color palette, and emotional mood. Do NOT include text in the image prompt — text is added separately. 1280x720 landscape format."
+  "visual_description": "3-4 sentence description of the RICH scene — characters, props, lighting, depth",
+  "image_prompt": "EXTREMELY DETAILED prompt for AI image generation, 150+ words. Must describe: EACH CHARACTER (clothing, expression, pose, what they hold), 5-10 SPECIFIC PROPS and positions, detailed BACKGROUND (architecture/landscape), LIGHTING (direction, color, shadows), DEPTH LAYERS (foreground/midground/background), art style (paper collage with torn edges, layered cutouts, drop shadows, washi tape, textures), color palette, mood. End with 'No text in image. 1280x720 landscape composition.'"
 }}
 
-Score each concept 1-10 on: curiosity, instant_comprehension, emotional_impact, mobile_readability, title_synergy, visual_uniqueness, ctr_potential.
-
 Output ONLY a JSON array of {num_concepts} concept objects. No markdown, no explanation, just the JSON array.
-
-Example for "Why Byzantium Was Drunk All The Time":
-[
-  {{
-    "concept_name": "The Emperor's Goblet",
-    "concept_type": "character",
-    "hero": "Byzantine emperor holding an absurdly large wine goblet",
-    "hero_expression": "slightly drunk, confident smirk, tilted crown",
-    "support": ["multiple empty wine amphorae scattered on floor"],
-    "text": "NO WATER?",
-    "text_function": "question",
-    "color_palette": ["imperial purple", "parchment beige", "wine red", "gold", "black"],
-    "composition": "emperor center-right, empty amphorae bottom-left, text top-left",
-    "background": "subtle Byzantine mosaic pattern, low contrast",
-    "ctr_mechanism": "viewer wonders if water safety explains the drinking",
-    "info_gap": "whether water availability is actually the reason",
-    "emotional_trigger": "curiosity",
-    "visual_description": "A Byzantine emperor in purple robes holds an impossibly large wine goblet, looking drunk and pleased. Multiple empty amphorae lie scattered at his feet. The scene is a paper collage with torn edges and layered cutouts.",
-    "image_prompt": "Paper collage style illustration, 1280x720 landscape. A Byzantine emperor in imperial purple robes holds an absurdly oversized golden wine goblet, standing center-right. He has a slightly drunk confident expression, crown tilted. Multiple empty clay amphorae scattered on the floor at bottom-left. Background is a subtle low-contrast Byzantine mosaic pattern in muted gold and beige. Art style: physical paper collage with torn edges, layered paper cutouts, visible drop shadows, washi tape accents, parchment texture. Color palette: imperial purple, parchment beige, wine red, gold, black. Mood: humorous, excessive, curious. No text in image."
-  }}
-]
-
-Now generate {num_concepts} concepts for the video above. Output ONLY the JSON array:"""
+"""
 
     result = _agnes_chat(user_prompt, timeout=120, temperature=0.9)
     if not result:
@@ -282,9 +347,17 @@ Now generate {num_concepts} concepts for the video above. Output ONLY the JSON a
 
 
 def _validate_concept(c):
-    """Check that a concept has the minimum required fields."""
+    """Check that a concept has the minimum required fields and rich enough prompt."""
     required = ["text", "image_prompt", "hero", "composition"]
-    return all(c.get(f) for f in required)
+    if not all(c.get(f) for f in required):
+        return False
+    # Reject image prompts that are too short (less than 80 words = likely minimal)
+    prompt = c.get("image_prompt", "")
+    word_count = len(prompt.split())
+    if word_count < 60:
+        print(f"  ⚠️ Rejecting concept '{c.get('concept_name','?')}': image_prompt too short ({word_count} words)")
+        return False
+    return True
 
 
 def _fallback_concepts(title, topic, num_concepts=3):
@@ -294,19 +367,19 @@ def _fallback_concepts(title, topic, num_concepts=3):
     key_word = topic_words[0].upper() if topic_words else "THIS"
 
     base = {
-        "hero": f"illustration related to {topic}",
-        "hero_expression": None,
-        "support": [],
+        "hero": f"a person reacting to {topic}",
+        "hero_expression": "shocked expression, wide eyes, mouth open",
+        "support": ["props related to the topic scattered on a table", "a second character looking concerned"],
         "text": f"THE TRUTH",
         "text_function": "revelation",
-        "color_palette": ["parchment beige", "deep red", "black", "gold"],
-        "composition": "hero center, text top",
-        "background": "simple textured parchment",
+        "color_palette": ["parchment beige", "deep red", "black", "gold", "warm orange"],
+        "composition": "main character center with shocked face, props in foreground, second character right, text top-left",
+        "background": "detailed interior with warm candlelight, shelves with books and objects",
         "ctr_mechanism": "curiosity about hidden truth",
         "info_gap": "what the truth actually is",
         "emotional_trigger": "curiosity",
-        "visual_description": f"A paper collage illustration about {topic} with bold torn edges.",
-        "image_prompt": f"Paper collage style illustration about {topic}, 1280x720 landscape. Bold torn paper edges, layered cutouts, drop shadows, parchment texture, muted colors with one bold accent. No text in image.",
+        "visual_description": f"A person with a shocked expression discovers something about {topic}. Props and documents scattered on a table in front of them. A second character looks on with concern. Warm candlelight, detailed background. Paper collage style.",
+        "image_prompt": f"Paper collage style illustration, 1280x720 landscape. A person center-frame with a shocked expression — wide eyes, mouth open in disbelief, holding up a document or object related to {topic}. On the table in front of them: scattered papers, a candle, books, and 3-4 topic-related props. To the right, a second character leans in with a concerned expression, looking at what the first person found. Background is a detailed interior room with wooden shelves, warm candlelight casting deep golden shadows from the left. Foreground: table with props. Midground: two characters. Background: shelf and wall details. Art style: physical paper collage with torn edges, layered paper cutouts at different depths, visible drop shadows beneath each layer, washi tape accents, parchment and cardstock textures, rich tactile surfaces. Color palette: parchment beige, deep red, black, gold, warm orange. Mood: dramatic, revelatory, tense. No text in image. 1280x720 landscape composition.",
     }
 
     concepts = []
@@ -370,10 +443,13 @@ def add_text_overlay(img, concept):
     draw = ImageDraw.Draw(canvas)
 
     # Determine text position from composition
-    if "top" in composition and "left" in composition:
+    # Default to top-left (most common for YouTube thumbnails)
+    if "top" in composition and "right" in composition:
+        position = "top-right"
+    elif "top" in composition and "left" in composition:
         position = "top-left"
     elif "top" in composition:
-        position = "top"
+        position = "top-left"
     elif "bottom" in composition:
         position = "bottom"
     elif "left" in composition:
@@ -419,18 +495,26 @@ def add_text_overlay(img, concept):
 
     total_h = h1 + h2 + (15 if line2 else 0)
 
+    # Calculate actual text widths for positioning and box sizing
+    actual_w1 = bbox1[2] - bbox1[0]
+    actual_w2 = font2.getbbox(line2)[2] - font2.getbbox(line2)[0] if line2 and font2 else 0
+    actual_text_w = max(actual_w1, actual_w2)
+
     # Calculate position
     if position == "top-left" or position == "top":
         x = margin
         y = margin + 10
+    elif position == "top-right":
+        x = TW - actual_text_w - margin
+        y = margin + 10
     elif position == "bottom":
-        x = (TW - max(bbox1[2]-bbox1[0], (font2.getbbox(line2)[2]-font2.getbbox(line2)[0] if font2 else 0))) // 2
+        x = (TW - actual_text_w) // 2
         y = TH - total_h - margin - 20
     elif position == "left":
         x = margin
         y = (TH - total_h) // 2
     elif position == "right":
-        x = TW - text_area_w - margin
+        x = TW - actual_text_w - margin
         y = (TH - total_h) // 2
     else:
         x = margin
@@ -440,10 +524,11 @@ def add_text_overlay(img, concept):
     accent = TEXT_COLORS.get(text_function, (255, 215, 60))
 
     # Draw a semi-transparent backing box behind text for readability
-    box_padding = 20
+    # Size the box to the ACTUAL text width, not the full text area
+    box_padding = 24
     box_x1 = x - box_padding
     box_y1 = y - box_padding // 2
-    box_x2 = x + text_area_w + box_padding
+    box_x2 = x + actual_text_w + box_padding
     box_y2 = y + total_h + box_padding
 
     # Create overlay for text background
